@@ -93,6 +93,9 @@
   .link-btn{background:none;border:none;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;font-size:11.5px;text-decoration:underline;cursor:pointer;padding:0;margin-top:14px;}
   .link-btn:hover{color:var(--ink);}
 
+  .foto-view-btn{background:none;border:none;color:var(--brass);font-family:'IBM Plex Mono',monospace;font-size:11px;text-decoration:underline;cursor:pointer;padding:0;margin-top:5px;display:block;}
+  .foto-view-btn:hover{color:var(--ink);}
+
   .week-group{margin-bottom:18px;}
   .week-title{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em;display:flex;justify-content:space-between;border-bottom:1px solid var(--rule);padding-bottom:6px;margin-bottom:6px;}
   table{width:100%;border-collapse:collapse;font-family:'IBM Plex Mono',monospace;font-size:12.5px;}
@@ -383,12 +386,12 @@
   <div class="modal">
     <h3>Corrigir dia — <span id="dayEditDateLabel"></span></h3>
     <div class="row2">
-      <div><label>Entrada</label><input type="time" id="deEntrada"></div>
-      <div><label>Saída almoço</label><input type="time" id="deSaidaAlmoco"></div>
+      <div><label>Entrada</label><input type="time" id="deEntrada"><button type="button" class="foto-view-btn" id="deFotoEntrada" style="display:none;">📷 Ver foto</button></div>
+      <div><label>Saída almoço</label><input type="time" id="deSaidaAlmoco"><button type="button" class="foto-view-btn" id="deFotoSaidaAlmoco" style="display:none;">📷 Ver foto</button></div>
     </div>
     <div class="row2">
-      <div><label>Volta almoço</label><input type="time" id="deVoltaAlmoco"></div>
-      <div><label>Saída</label><input type="time" id="deSaida"></div>
+      <div><label>Volta almoço</label><input type="time" id="deVoltaAlmoco"><button type="button" class="foto-view-btn" id="deFotoVoltaAlmoco" style="display:none;">📷 Ver foto</button></div>
+      <div><label>Saída</label><input type="time" id="deSaida"><button type="button" class="foto-view-btn" id="deFotoSaida" style="display:none;">📷 Ver foto</button></div>
     </div>
     <label>Tipo do dia</label>
     <select id="deTipo">
@@ -436,6 +439,7 @@ let dayEditTarget = null;
 let dayEditPendingFile = null; // {base64, mimeType, filename} staged for upload on save
 let dayEditRemoveAttachment = false;
 let dayEditExistingAttachMeta = null;
+let dayEditExistingFotos = {};
 const ATTACH_MAX_BASE64_CHARS = 6000000; // ~4.5MB decoded
 
 const ICONS = {
@@ -569,7 +573,7 @@ function getMondayOfWeek(dateStr){ const d=new Date(dateStr+'T12:00:00'); const 
 function fmtDateBR(dateStr){ const [y,m,d]=dateStr.split('-'); return `${d}/${m}`; }
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 function nowTimeStr(){ const d=new Date(); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
-function getEntry(dateStr){ return state.entries[dateStr] || {entrada:null,saidaAlmoco:null,voltaAlmoco:null,saida:null,obs:null,tipo:null,attachMeta:null}; }
+function getEntry(dateStr){ return state.entries[dateStr] || {entrada:null,saidaAlmoco:null,voltaAlmoco:null,saida:null,obs:null,tipo:null,attachMeta:null,fotos:{}}; }
 const DAY_TYPE_LABELS = { atestado:'Atestado médico', licenca_medica:'Licença médica', funeral:'Licença nojo/funeral', folga_banco:'Folga (banco de horas)' };
 function computeDayResult(dateStr){
   const entry = getEntry(dateStr);
@@ -672,8 +676,17 @@ document.getElementById('btnRegister').addEventListener('click', async ()=>{
   const dateStr = document.getElementById('punchDate').value || todayStr();
   const time = document.getElementById('punchTime').value;
   if(!time){ showStatus('analyzeStatus','error','Informe um horário (ou use "Usar agora").'); return; }
-  if(!state.entries[dateStr]) state.entries[dateStr] = {entrada:null,saidaAlmoco:null,voltaAlmoco:null,saida:null,obs:null,tipo:null,attachMeta:null};
+  if(!state.entries[dateStr]) state.entries[dateStr] = {entrada:null,saidaAlmoco:null,voltaAlmoco:null,saida:null,obs:null,tipo:null,attachMeta:null,fotos:{}};
   state.entries[dateStr][selectedType] = time;
+  if(pendingImage){
+    if(!state.entries[dateStr].fotos) state.entries[dateStr].fotos = {};
+    try{
+      await window.storage.set(`punch_photo:${dateStr}:${selectedType}`, pendingImage.base64, false);
+      state.entries[dateStr].fotos[selectedType] = { mimeType: pendingImage.mimeType };
+    }catch(e){
+      console.error('Erro ao salvar foto da batida', e);
+    }
+  }
   await persist();
   renderAll();
   const warnings = validateEntry(state.entries[dateStr]);
@@ -830,9 +843,33 @@ function openDayEdit(dateStr){
   dayEditPendingFile = null;
   dayEditRemoveAttachment = false;
   dayEditExistingAttachMeta = entry.attachMeta || null;
+  dayEditExistingFotos = entry.fotos || {};
   renderAttachCurrent();
+  renderFotoButtons(dateStr);
   applyTipoUI();
   dayEditOverlay.classList.add('show');
+}
+
+const FOTO_BTN_IDS = { entrada:'deFotoEntrada', saidaAlmoco:'deFotoSaidaAlmoco', voltaAlmoco:'deFotoVoltaAlmoco', saida:'deFotoSaida' };
+function renderFotoButtons(dateStr){
+  TYPE_ORDER.forEach(t=>{
+    const btn = document.getElementById(FOTO_BTN_IDS[t]);
+    if(dayEditExistingFotos[t]){
+      btn.style.display = 'block';
+      btn.onclick = async ()=>{
+        try{
+          const res = await window.storage.get(`punch_photo:${dateStr}:${t}`, false);
+          if(res && res.value) openBase64AsBlob(res.value, dayEditExistingFotos[t].mimeType || 'image/jpeg');
+          else showStatus('attachStatus','error','Foto não encontrada.');
+        }catch(e){
+          showStatus('attachStatus','error','Não consegui abrir a foto.');
+        }
+      };
+    } else {
+      btn.style.display = 'none';
+      btn.onclick = null;
+    }
+  });
 }
 
 document.getElementById('deAttachInput').addEventListener('change', (ev)=>{
@@ -919,6 +956,7 @@ document.getElementById('btnSaveDayEdit').addEventListener('click', async ()=>{
     obs: document.getElementById('deObs').value || null,
     tipo: document.getElementById('deTipo').value || null,
     attachMeta: attachMeta,
+    fotos: dayEditExistingFotos,
   };
   await persist();
   renderAll();
@@ -1050,6 +1088,7 @@ function renderLedger(){
         delete state.entries[d];
         persist();
         window.storage.delete(`attachment:${d}`, false).catch(()=>{});
+        TYPE_ORDER.forEach(t=> window.storage.delete(`punch_photo:${d}:${t}`, false).catch(()=>{}));
         renderAll();
       } else {
         btn.classList.add('confirming'); btn.textContent='Confirmar?';
