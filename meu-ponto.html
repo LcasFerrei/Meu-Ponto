@@ -6,6 +6,7 @@
 <title>Meu Ponto — Livro de Horas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
   :root{
     --paper: #EAF2FF;
@@ -447,7 +448,16 @@ const ICONS = {
 // ---------- storage ----------
 const DEFAULT_META_POR_DIA = {0:0, 1:528, 2:528, 3:528, 4:528, 5:528, 6:0};
 
-// Fallback storage local via IndexedDB caso window.storage não exista.
+// Configuração do Supabase — cole aqui a "Project URL" e a chave "anon public"
+// (Supabase Dashboard > Project Settings > API).
+const SUPABASE_URL = 'https://swjswlooxolztpuziwln.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_ibV7XHO7F3XmnNgHmzNRkA_qhgzLHHR';
+
+const supabaseClient = (SUPABASE_URL.startsWith('http') && window.supabase)
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+
+// Fallback storage local via IndexedDB caso o Supabase não esteja configurado ou fique inacessível.
 function openLocalDatabase(){
   return new Promise((resolve,reject)=>{
     const request = indexedDB.open('meu_ponto_db', 1);
@@ -471,8 +481,8 @@ async function useLocalStore(mode, callback){
     request.onerror = () => reject(request.error);
   });
 }
-if(!window.storage){
-  window.storage = {
+function makeIndexedDbStorage(){
+  return {
     async get(key, def){
       try{
         const value = await useLocalStore('readonly', store => store.get(key));
@@ -491,6 +501,33 @@ if(!window.storage){
       return true;
     }
   };
+}
+function makeSupabaseStorage(){
+  return {
+    async get(key, def){
+      try{
+        const { data, error } = await supabaseClient.from('kv_store').select('value').eq('key', key).maybeSingle();
+        if(error) throw error;
+        return { value: data ? data.value : (def === false ? null : def) };
+      }catch(e){
+        console.error('Supabase get error', e);
+        return { value: def === false ? null : def };
+      }
+    },
+    async set(key, value, ignore){
+      const { error } = await supabaseClient.from('kv_store').upsert({ key, value, updated_at: new Date().toISOString() });
+      if(error){ console.error('Supabase set error', error); throw error; }
+      return true;
+    },
+    async delete(key, ignore){
+      const { error } = await supabaseClient.from('kv_store').delete().eq('key', key);
+      if(error){ console.error('Supabase delete error', error); throw error; }
+      return true;
+    }
+  };
+}
+if(!window.storage){
+  window.storage = supabaseClient ? makeSupabaseStorage() : makeIndexedDbStorage();
 }
 
 async function loadData(){
