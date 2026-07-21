@@ -746,7 +746,7 @@ document.getElementById('btnAnalyze').addEventListener('click', async ()=>{
   const prompt = `Você está vendo a foto de um comprovante de registro de ponto, referente a uma única batida do tipo "${label}".
 O comprovante pode ser:
 (a) uma folha manuscrita, ou
-(b) um comprovante impresso de relógio ponto eletrônico (REP), tipo cupom térmico, com linhas como "CNPJ", "PIS", "NSR" e uma linha contendo a letra "D" seguida de data e hora, no formato "D DD/MM/AA HH:MM" (ex: "D 16/07/26 07:02" significa dia 16/07/2026 às 07:02). Ignore nome, CNPJ, PIS, NSR e códigos hash — o que importa é só a data e a hora dessa linha.
+(b) um comprovante impresso de relógio ponto eletrônico (REP), tipo cupom térmico, com linhas como "CNPJ", "PIS", "NSR". A data e a hora da batida aparecem logo depois de uma única letra maiúscula isolada (a letra varia conforme o modelo do relógio — pode ser "D", "A", "V", entre outras), no formato "[LETRA] DD/MM/AA HH:MM" (ex: "D 16/07/26 07:02" ou "A 21/07/26 06:56" significam, respectivamente, dia 16/07/2026 às 07:02 e dia 21/07/2026 às 06:56). Essa letra e a data/hora podem estar na própria linha do PIS (ex: "PIS 020208058855 A 21/07/26 06:56") ou em uma linha separada. Ignore nome, CNPJ, PIS, NSR e códigos hash — o que importa é só a data e a hora que vêm logo após essa letra isolada.
 
 Se houver mais de um comprovante/batida visível na mesma foto, escolha o que corresponde ao tipo pedido ("${label}"): batidas de entrada costumam ser mais cedo no dia, batidas de saída mais tarde.
 
@@ -759,7 +759,7 @@ Responda APENAS com um JSON válido, sem markdown, sem crases, sem texto antes o
 {"data":"AAAA-MM-DD ou null","horario":"HH:MM ou null"}`;
 
   try{
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    const response = await fetch("/api/ler-ponto", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
