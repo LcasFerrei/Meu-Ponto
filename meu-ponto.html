@@ -769,6 +769,7 @@ Responda APENAS com um JSON válido, sem markdown, sem crases, sem texto antes o
       })
     });
     const data = await response.json();
+    console.log('Resposta da leitura de foto (debug):', data);
     let raw = data.text || '';
     raw = raw.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(raw);
