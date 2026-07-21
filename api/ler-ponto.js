@@ -1,31 +1,48 @@
-// Vercel serverless function: proxeia a chamada pra Anthropic guardando a chave no servidor.
-// A chave nunca deve ir pro código do navegador — configure ANTHROPIC_API_KEY nas
-// Environment Variables do projeto no dashboard do Vercel.
+// Vercel serverless function: lê a foto da batida usando a API do Gemini
+// (tier gratuito). A chave nunca deve ir pro código do navegador — configure
+// GEMINI_API_KEY nas Environment Variables do projeto no dashboard do Vercel.
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
     return;
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    res.status(500).json({ error: 'ANTHROPIC_API_KEY não configurada no servidor.' });
+    res.status(500).json({ error: 'GEMINI_API_KEY não configurada no servidor.' });
+    return;
+  }
+
+  const { mimeType, imageBase64, prompt } = req.body || {};
+  if (!imageBase64 || !prompt) {
+    res.status(400).json({ error: 'Faltam imageBase64 ou prompt no corpo da requisição.' });
     return;
   }
 
   try {
-    const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+    const geminiRes = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
+        'x-goog-api-key': apiKey,
       },
-      body: JSON.stringify(req.body),
+      body: JSON.stringify({
+        model: 'gemini-3.5-flash',
+        input: [
+          { type: 'text', text: prompt },
+          { type: 'image', data: imageBase64, mime_type: mimeType || 'image/jpeg' },
+        ],
+      }),
     });
-    const data = await anthropicRes.json();
-    res.status(anthropicRes.status).json(data);
+
+    const data = await geminiRes.json();
+    if (!geminiRes.ok) {
+      res.status(geminiRes.status).json({ error: data.error?.message || 'Erro na API do Gemini', details: data });
+      return;
+    }
+
+    res.status(200).json({ text: data.output_text || '' });
   } catch (err) {
-    res.status(500).json({ error: 'Falha ao chamar a API da Anthropic', details: String(err) });
+    res.status(500).json({ error: 'Falha ao chamar a API do Gemini', details: String(err) });
   }
 }

@@ -763,20 +763,13 @@ Responda APENAS com um JSON válido, sem markdown, sem crases, sem texto antes o
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 500,
-        messages: [{
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: pendingImage.mimeType, data: pendingImage.base64 } },
-            { type: "text", text: prompt }
-          ]
-        }]
+        mimeType: pendingImage.mimeType,
+        imageBase64: pendingImage.base64,
+        prompt: prompt
       })
     });
     const data = await response.json();
-    const textBlock = (data.content || []).find(b => b.type === 'text');
-    let raw = textBlock ? textBlock.text : '';
+    let raw = data.text || '';
     raw = raw.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(raw);
 
