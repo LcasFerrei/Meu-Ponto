@@ -486,6 +486,29 @@ let dayEditExistingAttachMeta = null;
 let dayEditExistingFotos = {};
 const ATTACH_MAX_BASE64_CHARS = 6000000; // ~4.5MB decoded
 
+// Redimensiona/comprime uma imagem via canvas antes de salvar, pra não lotar o banco
+// com fotos de câmera em resolução total (3-8MB) quando 1600px já basta pra ler.
+function compressImageBase64(base64, mimeType, maxDimension = 1600, quality = 0.8){
+  return new Promise((resolve)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      let { width, height } = img;
+      if(width > maxDimension || height > maxDimension){
+        if(width >= height){ height = Math.round(height * (maxDimension / width)); width = maxDimension; }
+        else{ width = Math.round(width * (maxDimension / height)); height = maxDimension; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL('image/jpeg', quality);
+      resolve({ base64: dataUrl.split(',')[1], mimeType: 'image/jpeg' });
+    };
+    img.onerror = ()=> resolve({ base64, mimeType });
+    img.src = `data:${mimeType};base64,${base64}`;
+  });
+}
+
 const ICONS = {
   paperclip: '<svg class="icon-svg" viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>',
   warning: '<svg class="icon-svg" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>',
@@ -763,12 +786,13 @@ fileInput.addEventListener('change', (ev)=>{
   const file = ev.target.files[0];
   if(!file) return;
   const reader = new FileReader();
-  reader.onload = ()=>{
+  reader.onload = async ()=>{
     const result = reader.result;
-    pendingImage = { base64: result.split(',')[1], mimeType: file.type || 'image/jpeg' };
     document.getElementById('previewImg').src = result;
     document.getElementById('previewWrap').style.display='block';
     document.getElementById('btnAnalyze').style.display='block';
+    showStatus('analyzeStatus','info','Otimizando foto...');
+    pendingImage = await compressImageBase64(result.split(',')[1], file.type || 'image/jpeg');
     hideStatus('analyzeStatus');
   };
   reader.readAsDataURL(file);
@@ -916,14 +940,21 @@ document.getElementById('deAttachInput').addEventListener('change', (ev)=>{
   const file = ev.target.files[0];
   if(!file) return;
   const reader = new FileReader();
-  reader.onload = ()=>{
-    const base64 = reader.result.split(',')[1];
+  reader.onload = async ()=>{
+    let base64 = reader.result.split(',')[1];
+    let mimeType = file.type || 'application/octet-stream';
+    if(mimeType.startsWith('image/')){
+      showStatus('attachStatus','info','Otimizando imagem...');
+      const compressed = await compressImageBase64(base64, mimeType);
+      base64 = compressed.base64;
+      mimeType = compressed.mimeType;
+    }
     if(base64.length > ATTACH_MAX_BASE64_CHARS){
       showStatus('attachStatus','error','Arquivo muito grande. Tente uma foto mais leve ou um PDF menor.');
       ev.target.value = '';
       return;
     }
-    dayEditPendingFile = { base64, mimeType: file.type || 'application/octet-stream', filename: file.name };
+    dayEditPendingFile = { base64, mimeType, filename: file.name };
     dayEditRemoveAttachment = false;
     hideStatus('attachStatus');
     renderAttachCurrent();
