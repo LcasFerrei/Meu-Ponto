@@ -99,6 +99,15 @@
   .foto-view-btn{background:none;border:none;color:var(--brass);font-family:'IBM Plex Mono',monospace;font-size:11px;text-decoration:underline;cursor:pointer;padding:0;margin-top:5px;display:block;}
   .foto-view-btn:hover{color:var(--ink);}
 
+  .foto-day-group{margin-bottom:20px;}
+  .foto-day-title{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--rule);padding-bottom:6px;margin-bottom:10px;}
+  .foto-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;}
+  .foto-thumb{position:relative;border:1px solid var(--rule);border-radius:5px;overflow:hidden;background:var(--paper-2);}
+  .foto-thumb img{width:100%;height:90px;object-fit:cover;display:block;cursor:pointer;}
+  .foto-thumb .foto-label{font-family:'IBM Plex Mono',monospace;font-size:10px;padding:3px 5px;background:var(--white);color:var(--ink-soft);text-transform:uppercase;text-align:center;}
+  .foto-thumb .foto-del{position:absolute;top:3px;right:3px;background:rgba(230,57,70,.92);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:13px;line-height:18px;cursor:pointer;padding:0;}
+  .foto-thumb .foto-del:hover{background:var(--stamp-red);}
+
   .week-group{margin-bottom:18px;}
   .week-title{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em;display:flex;justify-content:space-between;border-bottom:1px solid var(--rule);padding-bottom:6px;margin-bottom:6px;}
   table{width:100%;border-collapse:collapse;font-family:'IBM Plex Mono',monospace;font-size:12.5px;}
@@ -281,6 +290,7 @@
     <button class="toolbar-btn" id="btnExportCsv"><svg class="icon-svg" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>Exportar CSV</button>
     <button class="toolbar-btn" id="btnExportBackup"><svg class="icon-svg" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>Backup (JSON)</button>
     <button class="toolbar-btn" id="btnPrint"><svg class="icon-svg" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>Imprimir / PDF</button>
+    <button class="toolbar-btn" id="btnFotos"><svg class="icon-svg" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>Fotos</button>
   </div>
 
   <div class="odometer">
@@ -430,6 +440,16 @@
     <input type="text" id="deObs" placeholder="ex: saí mais cedo, dentista">
     <button class="btn btn-primary" id="btnSaveDayEdit">Salvar dia</button>
     <button class="btn btn-ghost" id="btnCloseDayEdit">Cancelar</button>
+  </div>
+</div>
+
+<!-- Fotos das batidas modal -->
+<div class="overlay" id="fotosOverlay">
+  <div class="modal" style="max-width:640px;">
+    <h3>Fotos das batidas</h3>
+    <p class="modal-hint">Organizadas por dia. Clique na foto pra ampliar, ou no × pra excluir.</p>
+    <div id="fotosContent"></div>
+    <button class="btn btn-ghost" id="btnCloseFotos">Fechar</button>
   </div>
 </div>
 
@@ -926,6 +946,76 @@ function openBase64AsBlob(base64, mimeType){
     showStatus('attachStatus','error','Não consegui abrir o anexo.');
   }
 }
+
+// ---------- fotos das batidas (aba dedicada) ----------
+const fotosOverlay = document.getElementById('fotosOverlay');
+document.getElementById('btnFotos').addEventListener('click', openFotosOverlay);
+document.getElementById('btnCloseFotos').addEventListener('click', ()=> fotosOverlay.classList.remove('show'));
+
+async function openFotosOverlay(){
+  const content = document.getElementById('fotosContent');
+  content.innerHTML = `<p style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--ink-soft);">Carregando fotos...</p>`;
+  fotosOverlay.classList.add('show');
+
+  const dates = Object.keys(state.entries)
+    .filter(d => state.entries[d].fotos && Object.keys(state.entries[d].fotos).length)
+    .sort().reverse();
+
+  if(dates.length === 0){
+    content.innerHTML = `<div class="empty-state"><div class="stamp">vazio</div><div>Nenhuma foto de batida salva ainda.</div></div>`;
+    return;
+  }
+
+  const groupsHtml = [];
+  for(const d of dates){
+    const fotos = state.entries[d].fotos;
+    const types = TYPE_ORDER.filter(t => fotos[t]);
+    const thumbs = await Promise.all(types.map(async t=>{
+      let src = '';
+      try{
+        const res = await window.storage.get(`punch_photo:${d}:${t}`, false);
+        if(res && res.value) src = `data:${fotos[t].mimeType || 'image/jpeg'};base64,${res.value}`;
+      }catch(e){}
+      return { t, src };
+    }));
+    const validThumbs = thumbs.filter(x => x.src);
+    if(validThumbs.length === 0) continue;
+    groupsHtml.push(`
+      <div class="foto-day-group">
+        <div class="foto-day-title">${fmtDateBR(d)}/${d.slice(0,4)} · ${WEEKDAY_NAMES[dateWeekday(d)]}</div>
+        <div class="foto-grid">
+          ${validThumbs.map(({t,src})=> `
+            <div class="foto-thumb">
+              <img src="${src}" alt="${TYPE_LABELS[t]}" data-view="${src}">
+              <div class="foto-label">${TYPE_LABELS[t]}</div>
+              <button type="button" class="foto-del" data-day="${d}" data-type="${t}" title="Excluir foto">×</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `);
+  }
+
+  content.innerHTML = groupsHtml.length ? groupsHtml.join('') : `<div class="empty-state"><div class="stamp">vazio</div><div>Nenhuma foto de batida salva ainda.</div></div>`;
+
+  content.querySelectorAll('.foto-thumb img').forEach(img=>{
+    img.addEventListener('click', ()=> window.open(img.getAttribute('data-view'), '_blank'));
+  });
+  content.querySelectorAll('.foto-del').forEach(btn=>{
+    btn.addEventListener('click', async (ev)=>{
+      ev.stopPropagation();
+      const d = btn.getAttribute('data-day');
+      const t = btn.getAttribute('data-type');
+      if(!confirm(`Excluir a foto de "${TYPE_LABELS[t]}" do dia ${fmtDateBR(d)}?`)) return;
+      try{ await window.storage.delete(`punch_photo:${d}:${t}`, false); }catch(e){}
+      if(state.entries[d] && state.entries[d].fotos) delete state.entries[d].fotos[t];
+      await persist();
+      renderAll();
+      openFotosOverlay();
+    });
+  });
+}
+
 document.getElementById('btnFullDay').addEventListener('click', ()=>{
   openDayEdit(document.getElementById('punchDate').value || todayStr());
 });
