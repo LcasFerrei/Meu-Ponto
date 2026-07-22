@@ -416,6 +416,7 @@
       <option value="atestado">Atestado médico</option>
       <option value="licenca_medica">Licença médica</option>
       <option value="funeral">Licença nojo / funeral</option>
+      <option value="feriado">Feriado</option>
       <option value="folga_banco">Folga (usando banco de horas)</option>
     </select>
     <p id="deTipoHint" style="font-size:11.5px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;display:none;margin:6px 0 0;"></p>
@@ -602,11 +603,11 @@ function fmtDateBR(dateStr){ const [y,m,d]=dateStr.split('-'); return `${d}/${m}
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 function nowTimeStr(){ const d=new Date(); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
 function getEntry(dateStr){ return state.entries[dateStr] || {entrada:null,saidaAlmoco:null,voltaAlmoco:null,saida:null,obs:null,tipo:null,attachMeta:null,fotos:{}}; }
-const DAY_TYPE_LABELS = { atestado:'Atestado médico', licenca_medica:'Licença médica', funeral:'Licença nojo/funeral', folga_banco:'Folga (banco de horas)' };
+const DAY_TYPE_LABELS = { atestado:'Atestado médico', licenca_medica:'Licença médica', funeral:'Licença nojo/funeral', feriado:'Feriado', folga_banco:'Folga (banco de horas)' };
 function computeDayResult(dateStr){
   const entry = getEntry(dateStr);
   const meta = computeMeta(dateStr);
-  if(entry.tipo === 'atestado' || entry.tipo === 'licenca_medica' || entry.tipo === 'funeral'){
+  if(entry.tipo === 'atestado' || entry.tipo === 'licenca_medica' || entry.tipo === 'funeral' || entry.tipo === 'feriado'){
     return { worked: null, meta, diff: 0, tipo: entry.tipo };
   }
   if(entry.tipo === 'folga_banco'){
@@ -826,6 +827,8 @@ function applyTipoUI(){
     hint.style.display = 'block';
     hint.textContent = (tipo === 'folga_banco')
       ? 'Esse dia vai descontar do seu banco de horas o valor da meta diária.'
+      : (tipo === 'feriado')
+      ? 'Feriado — não conta como falta nem soma/desconta do banco de horas.'
       : 'Esse dia entra como justificado — não soma nem desconta do banco de horas.';
   }
   const justificado = (tipo === 'atestado' || tipo === 'licenca_medica' || tipo === 'funeral');
@@ -1086,7 +1089,7 @@ document.getElementById('viewToggle').addEventListener('click', (ev)=>{
 
 function diffClass(diff, tipo){
   if(diff==null) return '';
-  if(tipo === 'atestado' || tipo === 'licenca_medica' || tipo === 'funeral') return 'diff-neutral';
+  if(tipo === 'atestado' || tipo === 'licenca_medica' || tipo === 'funeral' || tipo === 'feriado') return 'diff-neutral';
   return diff>=0 ? 'diff-pos' : 'diff-neg';
 }
 
@@ -1270,7 +1273,7 @@ function renderYearStats(){
       const mk = d.slice(5,7);
       monthTotals[mk] = (monthTotals[mk]||0) + diff;
     }
-    if(tipo === 'atestado' || tipo === 'licenca_medica' || tipo === 'funeral') justificado++;
+    if(tipo === 'atestado' || tipo === 'licenca_medica' || tipo === 'funeral' || tipo === 'feriado') justificado++;
     else if(tipo === 'folga_banco') folga++;
     else if(diff!=null) workedDays++;
   });
