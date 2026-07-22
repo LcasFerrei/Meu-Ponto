@@ -93,7 +93,7 @@
   .status-line.error{background:#FBE4E6;color:var(--stamp-red);}
   .status-line.ok{background:var(--brass-bg);color:var(--brass);}
 
-  .link-btn{background:none;border:none;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;font-size:11.5px;text-decoration:underline;cursor:pointer;padding:0;margin-top:14px;}
+  .link-btn{background:none;border:none;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;font-size:11.5px;text-decoration:underline;cursor:pointer;padding:0;margin-top:14px;display:block;width:100%;text-align:left;white-space:normal;}
   .link-btn:hover{color:var(--ink);}
 
   .foto-view-btn{background:none;border:none;color:var(--brass);font-family:'IBM Plex Mono',monospace;font-size:11px;text-decoration:underline;cursor:pointer;padding:0;margin-top:5px;display:block;}
@@ -242,6 +242,21 @@
     td,th{padding:6px 5px;}
     .row-actions{flex-direction:column;gap:4px;}
     .row-actions button{width:100%;padding:6px 8px;}
+
+    /* Tabela de registros vira lista de cartões empilhados — evita que a tabela
+       fique mais larga que a tela em vez de exigir rolagem horizontal. */
+    .table-scroll{overflow-x:visible;}
+    .ledger-table{display:block;width:100%;}
+    .ledger-table thead{display:none;}
+    .ledger-table tbody{display:block;width:100%;}
+    .ledger-table tr{display:block;width:100%;border:1px solid var(--rule);border-radius:5px;padding:8px 10px;margin-bottom:8px;background:var(--white);}
+    .ledger-table tr.obs-row{border:none;padding:0;margin:-4px 0 8px;}
+    .ledger-table tr.obs-row td{display:block;text-align:left;padding:6px 8px;background:var(--paper-2);border-radius:5px;}
+    .ledger-table td{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:none;white-space:normal;text-align:right;}
+    .ledger-table td[data-label]:not([data-label=""])::before{content:attr(data-label);font-family:'IBM Plex Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);text-align:left;}
+    .ledger-table td:first-child{font-weight:600;}
+    .ledger-table .row-actions{flex-direction:row;width:auto;}
+    .ledger-table .row-actions button{width:auto;}
 
     .week-title, .month-title{flex-wrap:wrap;gap:4px;}
     .upload-zone{padding:14px 10px;}
@@ -1110,15 +1125,15 @@ function renderWeekRows(datesInWeek){
     const attachTag = entry.attachMeta ? `<span title="Documento anexado: ${escHtml(entry.attachMeta.filename)}" style="margin-left:4px;color:var(--ink-soft);">${ICONS.paperclip}</span>` : '';
     const workedCell = tipo ? '—' : fmtHM(worked);
     const timeCells = tipo
-      ? `<td colspan="4" style="color:var(--ink-soft);">${DAY_TYPE_LABELS[tipo]}</td>`
-      : `<td>${cell(entry.entrada)}</td><td>${cell(entry.saidaAlmoco)}</td><td>${cell(entry.voltaAlmoco)}</td><td>${cell(entry.saida)}</td>`;
+      ? `<td colspan="4" data-label="Tipo do dia" style="color:var(--ink-soft);">${DAY_TYPE_LABELS[tipo]}</td>`
+      : `<td data-label="Entrada">${cell(entry.entrada)}</td><td data-label="Saída alm.">${cell(entry.saidaAlmoco)}</td><td data-label="Volta alm.">${cell(entry.voltaAlmoco)}</td><td data-label="Saída">${cell(entry.saida)}</td>`;
     const obsRow = hasDetail ? `<tr class="obs-row" id="obs-${d}" style="display:none;"><td colspan="8">${detailParts.join('<br>')}</td></tr>` : '';
     return `<tr>
-      <td>${fmtDateBR(d)} <span class="weekday-tag">${wd}</span>${detailBtn}${attachTag}</td>
+      <td data-label="Data">${fmtDateBR(d)} <span class="weekday-tag">${wd}</span>${detailBtn}${attachTag}</td>
       ${timeCells}
-      <td>${workedCell}</td>
-      <td class="${diffClass(diff,tipo)}">${diff==null?'—':fmtSigned(diff)}</td>
-      <td><div class="row-actions">
+      <td data-label="Trabalhado">${workedCell}</td>
+      <td data-label="Diferença" class="${diffClass(diff,tipo)}">${diff==null?'—':fmtSigned(diff)}</td>
+      <td data-label=""><div class="row-actions">
         <button data-edit="${d}">Editar</button>
         <button class="del" data-del="${d}">Excluir</button>
       </div></td>
@@ -1137,7 +1152,7 @@ function renderWeekBlock(weekKey, datesInWeek){
       <span class="${weekTotal>=0?'diff-pos':'diff-neg'}">${fmtSigned(weekTotal)}</span>
     </div>
     <div class="table-scroll">
-    <table>
+    <table class="ledger-table">
       <thead><tr><th>Data</th><th>Entrada</th><th>Saída alm.</th><th>Volta alm.</th><th>Saída</th><th>Trabalhado</th><th>Diferença</th><th></th></tr></thead>
       <tbody>${renderWeekRows(datesInWeek)}</tbody>
     </table>
