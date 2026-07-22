@@ -101,9 +101,10 @@
 
   .foto-day-group{margin-bottom:20px;}
   .foto-day-title{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--rule);padding-bottom:6px;margin-bottom:10px;}
-  .foto-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;}
+  .foto-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px;}
   .foto-thumb{position:relative;border:1px solid var(--rule);border-radius:5px;overflow:hidden;background:var(--paper-2);}
-  .foto-thumb img{width:100%;height:90px;object-fit:cover;display:block;cursor:pointer;}
+  .foto-thumb img{width:100%;height:140px;object-fit:cover;display:block;cursor:pointer;}
+  #fotosContent{max-height:60vh;overflow-y:auto;margin-top:6px;}
   .foto-thumb .foto-label{font-family:'IBM Plex Mono',monospace;font-size:10px;padding:3px 5px;background:var(--white);color:var(--ink-soft);text-transform:uppercase;text-align:center;}
   .foto-thumb .foto-del{position:absolute;top:3px;right:3px;background:rgba(230,57,70,.92);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:13px;line-height:18px;cursor:pointer;padding:0;}
   .foto-thumb .foto-del:hover{background:var(--stamp-red);}
@@ -445,9 +446,10 @@
 
 <!-- Fotos das batidas modal -->
 <div class="overlay" id="fotosOverlay">
-  <div class="modal" style="max-width:640px;">
+  <div class="modal" style="max-width:900px;">
     <h3>Fotos das batidas</h3>
     <p class="modal-hint">Organizadas por dia. Clique na foto pra ampliar, ou no × pra excluir.</p>
+    <input type="text" id="fotosFilter" placeholder="Filtrar por dia (ex: 21/07 ou 21/07/2026)">
     <div id="fotosContent"></div>
     <button class="btn btn-ghost" id="btnCloseFotos">Fechar</button>
   </div>
@@ -953,6 +955,7 @@ document.getElementById('btnFotos').addEventListener('click', openFotosOverlay);
 document.getElementById('btnCloseFotos').addEventListener('click', ()=> fotosOverlay.classList.remove('show'));
 
 async function openFotosOverlay(){
+  document.getElementById('fotosFilter').value = '';
   const content = document.getElementById('fotosContent');
   content.innerHTML = `<p style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--ink-soft);">Carregando fotos...</p>`;
   fotosOverlay.classList.add('show');
@@ -971,22 +974,23 @@ async function openFotosOverlay(){
     const fotos = state.entries[d].fotos;
     const types = TYPE_ORDER.filter(t => fotos[t]);
     const thumbs = await Promise.all(types.map(async t=>{
-      let src = '';
+      let base64 = '';
       try{
         const res = await window.storage.get(`punch_photo:${d}:${t}`, false);
-        if(res && res.value) src = `data:${fotos[t].mimeType || 'image/jpeg'};base64,${res.value}`;
+        if(res && res.value) base64 = res.value;
       }catch(e){}
-      return { t, src };
+      return { t, base64, mimeType: fotos[t].mimeType || 'image/jpeg' };
     }));
-    const validThumbs = thumbs.filter(x => x.src);
+    const validThumbs = thumbs.filter(x => x.base64);
     if(validThumbs.length === 0) continue;
+    const dayLabel = `${fmtDateBR(d)}/${d.slice(0,4)} · ${WEEKDAY_NAMES[dateWeekday(d)]}`;
     groupsHtml.push(`
-      <div class="foto-day-group">
-        <div class="foto-day-title">${fmtDateBR(d)}/${d.slice(0,4)} · ${WEEKDAY_NAMES[dateWeekday(d)]}</div>
+      <div class="foto-day-group" data-day-label="${escHtml(dayLabel.toLowerCase())}">
+        <div class="foto-day-title">${dayLabel}</div>
         <div class="foto-grid">
-          ${validThumbs.map(({t,src})=> `
+          ${validThumbs.map(({t,base64,mimeType})=> `
             <div class="foto-thumb">
-              <img src="${src}" alt="${TYPE_LABELS[t]}" data-view="${src}">
+              <img src="data:${mimeType};base64,${base64}" alt="${TYPE_LABELS[t]}" data-b64="${base64}" data-mime="${mimeType}">
               <div class="foto-label">${TYPE_LABELS[t]}</div>
               <button type="button" class="foto-del" data-day="${d}" data-type="${t}" title="Excluir foto">×</button>
             </div>
@@ -999,7 +1003,7 @@ async function openFotosOverlay(){
   content.innerHTML = groupsHtml.length ? groupsHtml.join('') : `<div class="empty-state"><div class="stamp">vazio</div><div>Nenhuma foto de batida salva ainda.</div></div>`;
 
   content.querySelectorAll('.foto-thumb img').forEach(img=>{
-    img.addEventListener('click', ()=> window.open(img.getAttribute('data-view'), '_blank'));
+    img.addEventListener('click', ()=> openBase64AsBlob(img.getAttribute('data-b64'), img.getAttribute('data-mime')));
   });
   content.querySelectorAll('.foto-del').forEach(btn=>{
     btn.addEventListener('click', async (ev)=>{
@@ -1014,7 +1018,17 @@ async function openFotosOverlay(){
       openFotosOverlay();
     });
   });
+  applyFotosFilter();
 }
+
+function applyFotosFilter(){
+  const term = document.getElementById('fotosFilter').value.trim().toLowerCase();
+  document.querySelectorAll('#fotosContent .foto-day-group').forEach(group=>{
+    const label = group.getAttribute('data-day-label') || '';
+    group.style.display = (!term || label.includes(term)) ? '' : 'none';
+  });
+}
+document.getElementById('fotosFilter').addEventListener('input', applyFotosFilter);
 
 document.getElementById('btnFullDay').addEventListener('click', ()=>{
   openDayEdit(document.getElementById('punchDate').value || todayStr());
