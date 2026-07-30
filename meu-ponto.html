@@ -466,6 +466,16 @@
   </div>
 </div>
 
+<!-- Confirmação genérica -->
+<div class="overlay" id="confirmOverlay">
+  <div class="modal" style="max-width:360px;">
+    <h3>Confirmar</h3>
+    <p id="confirmMessage" style="font-family:'IBM Plex Sans',sans-serif;font-size:14px;color:var(--ink);margin:0 0 18px;line-height:1.4;"></p>
+    <button class="btn btn-primary" id="btnConfirmYes">Confirmar</button>
+    <button class="btn btn-ghost" id="btnConfirmNo">Cancelar</button>
+  </div>
+</div>
+
 <!-- Férias modal -->
 <div class="overlay" id="feriasOverlay">
   <div class="modal" style="max-width:480px;">
@@ -1013,6 +1023,21 @@ document.getElementById('btnViewAttach').addEventListener('click', async ()=>{
   }
 });
 
+// ---------- confirmação genérica (modal, sem alert nativo) ----------
+const confirmOverlay = document.getElementById('confirmOverlay');
+let confirmResolve = null;
+function confirmModal(message){
+  document.getElementById('confirmMessage').textContent = message;
+  confirmOverlay.classList.add('show');
+  return new Promise(resolve=>{ confirmResolve = resolve; });
+}
+function settleConfirm(result){
+  confirmOverlay.classList.remove('show');
+  if(confirmResolve){ confirmResolve(result); confirmResolve = null; }
+}
+document.getElementById('btnConfirmYes').addEventListener('click', ()=> settleConfirm(true));
+document.getElementById('btnConfirmNo').addEventListener('click', ()=> settleConfirm(false));
+
 function openBase64AsBlob(base64, mimeType){
   try{
     const byteChars = atob(base64);
@@ -1109,7 +1134,7 @@ function renderFeriasList(){
   list.querySelectorAll('[data-del-ferias]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const [start,end] = btn.getAttribute('data-del-ferias').split('|');
-      if(!confirm(`Remover as férias de ${fmtDateBR(start)} a ${fmtDateBR(end)}?`)) return;
+      if(!(await confirmModal(`Remover as férias de ${fmtDateBR(start)} a ${fmtDateBR(end)}?`))) return;
       eachDateInRange(start,end).forEach(d=>{
         if(state.entries[d] && state.entries[d].tipo === 'ferias') delete state.entries[d];
       });
@@ -1148,7 +1173,7 @@ document.getElementById('btnAplicarFerias').addEventListener('click', async ()=>
     const e = state.entries[d];
     return e && (e.entrada || e.saidaAlmoco || e.voltaAlmoco || e.saida || (e.tipo && e.tipo !== 'ferias'));
   });
-  if(withData.length && !confirm(`${withData.length} dia(s) nesse período já têm registros (batidas ou outro tipo marcado). Sobrescrever tudo como férias?`)){
+  if(withData.length && !(await confirmModal(`${withData.length} dia(s) nesse período já têm registros (batidas ou outro tipo marcado). Sobrescrever tudo como férias?`))){
     return;
   }
   dates.forEach(d=>{
@@ -1226,7 +1251,7 @@ async function openFotosOverlay(){
       ev.stopPropagation();
       const d = btn.getAttribute('data-day');
       const t = btn.getAttribute('data-type');
-      if(!confirm(`Excluir a foto de "${TYPE_LABELS[t]}" do dia ${fmtDateBR(d)}?`)) return;
+      if(!(await confirmModal(`Excluir a foto de "${TYPE_LABELS[t]}" do dia ${fmtDateBR(d)}?`))) return;
       try{ await window.storage.delete(`punch_photo:${d}:${t}`, false); }catch(e){}
       if(state.entries[d] && state.entries[d].fotos) delete state.entries[d].fotos[t];
       await persist();
