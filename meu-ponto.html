@@ -109,6 +109,10 @@
   .foto-thumb .foto-del{position:absolute;top:3px;right:3px;background:rgba(230,57,70,.92);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:13px;line-height:18px;cursor:pointer;padding:0;}
   .foto-thumb .foto-del:hover{background:var(--stamp-red);}
 
+  .ferias-row{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--rule);border-radius:5px;padding:8px 10px;margin-bottom:6px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;}
+  .ferias-row .row-actions{flex-shrink:0;}
+  .ferias-empty{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-soft);padding:6px 0;}
+
   .week-group{margin-bottom:18px;}
   .week-title{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em;display:flex;justify-content:space-between;border-bottom:1px solid var(--rule);padding-bottom:6px;margin-bottom:6px;}
   table{width:100%;border-collapse:collapse;font-family:'IBM Plex Mono',monospace;font-size:12.5px;}
@@ -464,16 +468,20 @@
 
 <!-- Férias modal -->
 <div class="overlay" id="feriasOverlay">
-  <div class="modal">
-    <h3>Marcar férias</h3>
-    <p class="modal-hint">Preenche o período inteiro como férias — não conta como falta nem soma/desconta do banco de horas.</p>
+  <div class="modal" style="max-width:480px;">
+    <h3>Férias</h3>
+    <p class="modal-hint">Marca o período inteiro como férias — não conta como falta nem soma/desconta do banco de horas.</p>
     <div class="row2">
       <div><label>Data de saída</label><input type="date" id="feriasInicio"></div>
       <div><label>Data de retorno</label><input type="date" id="feriasFim"></div>
     </div>
     <div class="status-line" id="feriasStatus"></div>
     <button class="btn btn-primary" id="btnAplicarFerias">Marcar férias no período</button>
-    <button class="btn btn-ghost" id="btnRemoverFerias">Remover férias desse período</button>
+    <button class="btn btn-ghost" id="btnCancelEditFerias" style="display:none;">Cancelar edição</button>
+
+    <label style="margin-top:18px;">Férias concedidas</label>
+    <div id="feriasList"></div>
+
     <button class="btn btn-ghost" id="btnCloseFerias">Fechar</button>
   </div>
 </div>
@@ -1020,10 +1028,14 @@ function openBase64AsBlob(base64, mimeType){
 
 // ---------- férias (período em lote) ----------
 const feriasOverlay = document.getElementById('feriasOverlay');
+let feriasEditing = null; // {start, end} do período sendo editado, ou null se adicionando novo
+
 document.getElementById('btnFerias').addEventListener('click', ()=>{
+  exitFeriasEditMode();
   document.getElementById('feriasInicio').value = '';
   document.getElementById('feriasFim').value = '';
   hideStatus('feriasStatus');
+  renderFeriasList();
   feriasOverlay.classList.add('show');
 });
 document.getElementById('btnCloseFerias').addEventListener('click', ()=> feriasOverlay.classList.remove('show'));
@@ -1047,9 +1059,91 @@ function readFeriasRange(){
   return eachDateInRange(inicio, fim);
 }
 
+function getFeriasPeriods(){
+  const dates = Object.keys(state.entries).filter(d => state.entries[d].tipo === 'ferias').sort();
+  const periods = [];
+  dates.forEach(d=>{
+    const last = periods[periods.length-1];
+    if(last){
+      const nextExpected = new Date(last.end+'T12:00:00');
+      nextExpected.setDate(nextExpected.getDate()+1);
+      if(nextExpected.toISOString().slice(0,10) === d){ last.end = d; return; }
+    }
+    periods.push({ start: d, end: d });
+  });
+  return periods.sort((a,b)=> b.start.localeCompare(a.start));
+}
+
+function renderFeriasList(){
+  const list = document.getElementById('feriasList');
+  const periods = getFeriasPeriods();
+  if(periods.length === 0){
+    list.innerHTML = `<div class="ferias-empty">Nenhuma férias concedida ainda.</div>`;
+    return;
+  }
+  list.innerHTML = periods.map(p=>{
+    const count = eachDateInRange(p.start, p.end).length;
+    const label = p.start === p.end
+      ? `${fmtDateBR(p.start)}/${p.start.slice(0,4)} (1 dia)`
+      : `${fmtDateBR(p.start)} – ${fmtDateBR(p.end)}/${p.end.slice(0,4)} (${count} dias)`;
+    return `<div class="ferias-row">
+      <span>${label}</span>
+      <div class="row-actions">
+        <button data-edit-ferias="${p.start}|${p.end}">Editar</button>
+        <button class="del" data-del-ferias="${p.start}|${p.end}">Excluir</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('[data-edit-ferias]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const [start,end] = btn.getAttribute('data-edit-ferias').split('|');
+      feriasEditing = { start, end };
+      document.getElementById('feriasInicio').value = start;
+      document.getElementById('feriasFim').value = end;
+      document.getElementById('btnAplicarFerias').textContent = 'Salvar alterações do período';
+      document.getElementById('btnCancelEditFerias').style.display = 'block';
+      showStatus('feriasStatus','info','Ajuste as datas e clique em "Salvar alterações do período".');
+    });
+  });
+  list.querySelectorAll('[data-del-ferias]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const [start,end] = btn.getAttribute('data-del-ferias').split('|');
+      if(!confirm(`Remover as férias de ${fmtDateBR(start)} a ${fmtDateBR(end)}?`)) return;
+      eachDateInRange(start,end).forEach(d=>{
+        if(state.entries[d] && state.entries[d].tipo === 'ferias') delete state.entries[d];
+      });
+      await persist();
+      renderAll();
+      renderFeriasList();
+      exitFeriasEditMode();
+      showStatus('feriasStatus','ok','Período de férias removido.');
+    });
+  });
+}
+
+function exitFeriasEditMode(){
+  feriasEditing = null;
+  document.getElementById('btnAplicarFerias').textContent = 'Marcar férias no período';
+  document.getElementById('btnCancelEditFerias').style.display = 'none';
+}
+document.getElementById('btnCancelEditFerias').addEventListener('click', ()=>{
+  exitFeriasEditMode();
+  document.getElementById('feriasInicio').value = '';
+  document.getElementById('feriasFim').value = '';
+  hideStatus('feriasStatus');
+});
+
 document.getElementById('btnAplicarFerias').addEventListener('click', async ()=>{
   const dates = readFeriasRange();
   if(!dates) return;
+
+  if(feriasEditing){
+    eachDateInRange(feriasEditing.start, feriasEditing.end).forEach(d=>{
+      if(state.entries[d] && state.entries[d].tipo === 'ferias') delete state.entries[d];
+    });
+  }
+
   const withData = dates.filter(d => {
     const e = state.entries[d];
     return e && (e.entrada || e.saidaAlmoco || e.voltaAlmoco || e.saida || (e.tipo && e.tipo !== 'ferias'));
@@ -1063,22 +1157,12 @@ document.getElementById('btnAplicarFerias').addEventListener('click', async ()=>
   });
   await persist();
   renderAll();
-  showStatus('feriasStatus','ok', `${dates.length} dia(s) marcado(s) como férias.`);
-});
-
-document.getElementById('btnRemoverFerias').addEventListener('click', async ()=>{
-  const dates = readFeriasRange();
-  if(!dates) return;
-  let removed = 0;
-  dates.forEach(d=>{
-    if(state.entries[d] && state.entries[d].tipo === 'ferias'){
-      delete state.entries[d];
-      removed++;
-    }
-  });
-  await persist();
-  renderAll();
-  showStatus('feriasStatus', removed ? 'ok' : 'error', removed ? `${removed} dia(s) de férias removido(s).` : 'Nenhum dia de férias encontrado nesse período.');
+  renderFeriasList();
+  const wasEditing = !!feriasEditing;
+  exitFeriasEditMode();
+  document.getElementById('feriasInicio').value = '';
+  document.getElementById('feriasFim').value = '';
+  showStatus('feriasStatus','ok', wasEditing ? 'Período de férias atualizado.' : `${dates.length} dia(s) marcado(s) como férias.`);
 });
 
 // ---------- fotos das batidas (aba dedicada) ----------
