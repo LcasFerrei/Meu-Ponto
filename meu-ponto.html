@@ -408,6 +408,8 @@
     <p class="modal-hint">Configure seu horário de entrada e saída — a meta diária é calculada automaticamente.</p>
 
     <div class="vigencia-info" id="jornadaVigenciaInfo"></div>
+    <button type="button" class="link-btn" id="btnToggleHistorico" style="margin-top:0;">Ver histórico de jornadas</button>
+    <div id="jornadaHistorico" style="display:none;margin:10px 0 4px;"></div>
 
     <label>Modelo rápido</label>
     <div class="preset-grid" id="presetGrid">
@@ -422,7 +424,10 @@
       <div><label style="margin-top:0;">Vigente a partir de</label><input type="date" id="jornadaVigenciaDesde"></div>
     </div>
 
-    <label style="margin-top:18px;">Horário por dia</label>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px;">
+      <label style="margin:0;">Horário por dia</label>
+      <button type="button" class="btn btn-ghost btn-small" id="btnCopiarParaTodos" style="width:auto;margin:0;">Copiar 1º dia pra todos</button>
+    </div>
     <div class="day-selector" id="daySelector"></div>
 
     <div class="week-total-line">Total semanal <span id="weekTotalPreview">44h00</span></div>
@@ -1702,12 +1707,55 @@ function updateJornadaVigenciaInfo(latest){
   info.innerHTML = `${atual}Mudanças aqui valem a partir da data escolhida em "Vigente a partir de" abaixo — dias já registrados continuam com a jornada anterior e o banco de horas acumulado não muda.`;
 }
 
+function renderJornadaHistorico(){
+  const box = document.getElementById('jornadaHistorico');
+  const periods = [...state.jornadaPeriods].sort((a,b)=> b.vigenciaDesde.localeCompare(a.vigenciaDesde));
+  box.innerHTML = periods.map(p=>{
+    const vals = WEEKDAYS_ORDER.map(wd=> p.metaPorDia[wd]||0);
+    const allEqual = vals.every(v=>v===vals[0]);
+    const dayLabel = allEqual ? `${Math.floor(vals[0]/60)}h${pad2(vals[0]%60)}/dia` : 'variável por dia';
+    const total = vals.reduce((a,b)=>a+b,0);
+    const desde = (p.vigenciaDesde === '0000-01-01') ? 'Desde sempre' : `Desde ${fmtDateBR(p.vigenciaDesde)}/${p.vigenciaDesde.slice(0,4)}`;
+    return `<div class="ferias-row"><span>${desde} — ${dayLabel} (seg-sex) · ${Math.floor(total/60)}h${pad2(total%60)}/semana</span></div>`;
+  }).join('');
+}
+document.getElementById('btnToggleHistorico').addEventListener('click', ()=>{
+  const box = document.getElementById('jornadaHistorico');
+  const btn = document.getElementById('btnToggleHistorico');
+  const showing = box.style.display !== 'none';
+  if(showing){ box.style.display = 'none'; btn.textContent = 'Ver histórico de jornadas'; return; }
+  renderJornadaHistorico();
+  box.style.display = 'block';
+  btn.textContent = 'Ocultar histórico de jornadas';
+});
+
+document.getElementById('btnCopiarParaTodos').addEventListener('click', ()=>{
+  const rows = document.querySelectorAll('#daySelector .day-row');
+  if(rows.length < 2) return;
+  const first = rows[0];
+  const entrada = first.querySelector('.dayEntrada').value;
+  const saida = first.querySelector('.daySaida').value;
+  if(!entrada || !saida) return;
+  rows.forEach(row=>{
+    const cb = row.querySelector('.dayEnable');
+    cb.checked = true;
+    row.classList.remove('disabled');
+    const entradaInp = row.querySelector('.dayEntrada'), saidaInp = row.querySelector('.daySaida');
+    entradaInp.disabled = false; saidaInp.disabled = false;
+    entradaInp.value = entrada;
+    saidaInp.value = saida;
+  });
+  updateWeekTotalPreview();
+});
+
 const settingsOverlay = document.getElementById('settingsOverlay');
 document.getElementById('btnSettings').addEventListener('click', ()=>{
   const latest = state.jornadaPeriods[state.jornadaPeriods.length-1];
   document.getElementById('jornadaAlmocoMin').value = latest.almocoMin ?? 60;
   document.getElementById('jornadaVigenciaDesde').value = todayStr();
   updateJornadaVigenciaInfo(latest);
+  document.getElementById('jornadaHistorico').style.display = 'none';
+  document.getElementById('btnToggleHistorico').textContent = 'Ver histórico de jornadas';
   buildDaySelector();
   settingsOverlay.classList.add('show');
 });
