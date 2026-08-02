@@ -154,7 +154,10 @@
   .icon-lg{width:26px;height:26px;vertical-align:middle;}
   .gear-btn .icon-svg, .toolbar-btn .icon-svg{margin-right:5px;}
   .modal-hint{font-size:12px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;margin:0 0 14px;}
+  .vigencia-info{background:var(--brass-bg);border:1px solid #9FD4F5;border-radius:5px;padding:11px 13px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink-soft);line-height:1.55;margin:0 0 18px;}
+  .vigencia-info b{color:var(--ink);}
   .preset-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  @media (min-width:560px){ #jornadaModal .preset-grid{grid-template-columns:repeat(4,1fr);} }
   .preset-btn{border:1px solid var(--rule);background:var(--white);border-radius:5px;padding:10px 10px;cursor:pointer;text-align:left;display:flex;flex-direction:column;gap:2px;}
   .preset-btn:hover{border-color:var(--ink);}
   .preset-btn.active{border-color:var(--brass);background:var(--brass-bg);}
@@ -162,9 +165,10 @@
   .preset-btn .p-sub{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--ink-soft);}
 
   .day-selector{display:flex;flex-direction:column;gap:6px;margin-top:6px;}
-  .day-row{display:flex;align-items:center;gap:10px;border:1px solid var(--rule);border-radius:5px;padding:7px 10px;}
+  .day-row{display:flex;align-items:center;gap:10px;border:1px solid var(--rule);border-radius:5px;padding:9px 12px;transition:border-color .15s;}
+  .day-row:hover{border-color:var(--ink-soft);}
   .day-row.disabled{opacity:.5;}
-  .day-check{display:flex;align-items:center;gap:7px;font-family:'IBM Plex Sans',sans-serif;font-size:13px;font-weight:600;width:78px;flex-shrink:0;cursor:pointer;}
+  .day-check{display:flex;align-items:center;gap:8px;font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;font-weight:600;width:112px;flex-shrink:0;cursor:pointer;white-space:nowrap;}
   .day-check input{width:auto;accent-color:var(--ink);}
   .day-time-inputs{display:flex;align-items:center;gap:5px;flex:1;}
   .day-time-inputs input{width:54px;padding:6px 7px;font-size:13px;text-align:center;}
@@ -399,25 +403,26 @@
 
 <!-- Settings modal -->
 <div class="overlay" id="settingsOverlay">
-  <div class="modal" style="max-width:420px;">
+  <div class="modal" id="jornadaModal" style="max-width:640px;">
     <h3>Jornada padrão</h3>
-    <p class="modal-hint" id="jornadaVigenciaInfo">Escolha um modelo pronto ou ajuste cada dia da semana.</p>
+    <p class="modal-hint">Configure seu horário de entrada e saída — a meta diária é calculada automaticamente.</p>
 
-    <label>Vigente a partir de</label>
-    <input type="date" id="jornadaVigenciaDesde">
-    <p class="modal-hint" style="margin-top:4px;">Dias já registrados antes dessa data continuam calculados com a jornada anterior — o banco de horas acumulado não muda.</p>
+    <div class="vigencia-info" id="jornadaVigenciaInfo"></div>
 
-    <div class="preset-grid" id="presetGrid" style="margin-top:14px;">
+    <label>Modelo rápido</label>
+    <div class="preset-grid" id="presetGrid">
       <button type="button" class="preset-btn" data-preset="528"><span class="p-title">44h/semana</span><span class="p-sub">8h48 por dia · CLT</span></button>
       <button type="button" class="preset-btn" data-preset="480"><span class="p-title">40h/semana</span><span class="p-sub">8h por dia</span></button>
       <button type="button" class="preset-btn" data-preset="432"><span class="p-title">36h/semana</span><span class="p-sub">7h12 por dia</span></button>
       <button type="button" class="preset-btn" data-preset="360"><span class="p-title">30h/semana</span><span class="p-sub">6h por dia</span></button>
     </div>
 
-    <label style="margin-top:16px;">Intervalo de almoço (minutos)</label>
-    <input type="number" id="jornadaAlmocoMin" min="0" max="240" value="60">
+    <div class="row2" style="margin-top:16px;">
+      <div><label style="margin-top:0;">Intervalo de almoço (min)</label><input type="number" id="jornadaAlmocoMin" min="0" max="240" value="60"></div>
+      <div><label style="margin-top:0;">Vigente a partir de</label><input type="date" id="jornadaVigenciaDesde"></div>
+    </div>
 
-    <label style="margin-top:12px;">Horário por dia</label>
+    <label style="margin-top:18px;">Horário por dia</label>
     <div class="day-selector" id="daySelector"></div>
 
     <div class="week-total-line">Total semanal <span id="weekTotalPreview">44h00</span></div>
@@ -1691,11 +1696,10 @@ document.getElementById('jornadaAlmocoMin').addEventListener('input', updateWeek
 
 function updateJornadaVigenciaInfo(latest){
   const info = document.getElementById('jornadaVigenciaInfo');
-  if(latest.vigenciaDesde && latest.vigenciaDesde !== '0000-01-01'){
-    info.textContent = `Jornada atual vigente desde ${fmtDateBR(latest.vigenciaDesde)}/${latest.vigenciaDesde.slice(0,4)}. Pra registrar uma mudança de horário sem afetar dias já registrados, ajuste "Vigente a partir de" pra uma data futura.`;
-  } else {
-    info.textContent = `Escolha um modelo pronto ou ajuste o horário de entrada/saída de cada dia.`;
-  }
+  const atual = (latest.vigenciaDesde && latest.vigenciaDesde !== '0000-01-01')
+    ? `Jornada atual vigente desde <b>${fmtDateBR(latest.vigenciaDesde)}/${latest.vigenciaDesde.slice(0,4)}</b>. `
+    : '';
+  info.innerHTML = `${atual}Mudanças aqui valem a partir da data escolhida em "Vigente a partir de" abaixo — dias já registrados continuam com a jornada anterior e o banco de horas acumulado não muda.`;
 }
 
 const settingsOverlay = document.getElementById('settingsOverlay');
