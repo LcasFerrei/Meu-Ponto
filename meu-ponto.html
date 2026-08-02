@@ -583,6 +583,34 @@ const supabaseClient = (SUPABASE_URL.startsWith('http') && window.supabase)
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
 
+// ---------- fotos/anexos: Supabase Storage (bucket binário, não texto no banco) ----------
+const PHOTOS_BUCKET = 'fotos';
+function base64ToBlob(base64, mimeType){
+  const byteChars = atob(base64);
+  const bytes = new Uint8Array(byteChars.length);
+  for(let i=0;i<byteChars.length;i++) bytes[i] = byteChars.charCodeAt(i);
+  return new Blob([bytes], { type: mimeType || 'application/octet-stream' });
+}
+async function uploadPhotoFile(path, base64, mimeType){
+  const blob = base64ToBlob(base64, mimeType);
+  const { error } = await supabaseClient.storage.from(PHOTOS_BUCKET).upload(path, blob, { upsert: true, contentType: mimeType || 'application/octet-stream' });
+  if(error) throw error;
+}
+function getPhotoPublicUrl(path){
+  const { data } = supabaseClient.storage.from(PHOTOS_BUCKET).getPublicUrl(path);
+  return data ? data.publicUrl : null;
+}
+async function deletePhotoFile(path){
+  const { error } = await supabaseClient.storage.from(PHOTOS_BUCKET).remove([path]);
+  if(error) throw error;
+}
+function guessExt(mimeType, filename){
+  if(filename && filename.includes('.')) return filename.split('.').pop().toLowerCase();
+  if(mimeType === 'application/pdf') return 'pdf';
+  if(mimeType === 'image/png') return 'png';
+  return 'jpg';
+}
+
 // Fallback storage local via IndexedDB caso o Supabase não esteja configurado ou fique inacessível.
 function openLocalDatabase(){
   return new Promise((resolve,reject)=>{
@@ -817,9 +845,15 @@ document.getElementById('btnRegister').addEventListener('click', async ()=>{
   state.entries[dateStr][selectedType] = time;
   if(pendingImage){
     if(!state.entries[dateStr].fotos) state.entries[dateStr].fotos = {};
+    const path = `punch/${dateStr}-${selectedType}.jpg`;
     try{
-      await window.storage.set(`punch_photo:${dateStr}:${selectedType}`, pendingImage.base64, false);
-      state.entries[dateStr].fotos[selectedType] = { mimeType: pendingImage.mimeType };
+      if(supabaseClient){
+        await uploadPhotoFile(path, pendingImage.base64, pendingImage.mimeType);
+        state.entries[dateStr].fotos[selectedType] = { mimeType: pendingImage.mimeType, storage: true, path };
+      } else {
+        await window.storage.set(`punch_photo:${dateStr}:${selectedType}`, pendingImage.base64, false);
+        state.entries[dateStr].fotos[selectedType] = { mimeType: pendingImage.mimeType };
+      }
     }catch(e){
       console.error('Erro ao salvar foto da batida', e);
     }
@@ -990,12 +1024,19 @@ const FOTO_BTN_IDS = { entrada:'deFotoEntrada', saidaAlmoco:'deFotoSaidaAlmoco',
 function renderFotoButtons(dateStr){
   TYPE_ORDER.forEach(t=>{
     const btn = document.getElementById(FOTO_BTN_IDS[t]);
-    if(dayEditExistingFotos[t]){
+    const meta = dayEditExistingFotos[t];
+    if(meta){
       btn.style.display = 'block';
       btn.onclick = async ()=>{
+        if(meta.storage && meta.path){
+          const url = getPhotoPublicUrl(meta.path);
+          if(url) window.open(url, '_blank');
+          else showStatus('attachStatus','error','Não consegui abrir a foto.');
+          return;
+        }
         try{
           const res = await window.storage.get(`punch_photo:${dateStr}:${t}`, false);
-          if(res && res.value) openBase64AsBlob(res.value, dayEditExistingFotos[t].mimeType || 'image/jpeg');
+          if(res && res.value) openBase64AsBlob(res.value, meta.mimeType || 'image/jpeg');
           else showStatus('attachStatus','error','Foto não encontrada.');
         }catch(e){
           showStatus('attachStatus','error','Não consegui abrir a foto.');
@@ -1047,6 +1088,12 @@ document.getElementById('btnViewAttach').addEventListener('click', async ()=>{
     return;
   }
   if(!dayEditExistingAttachMeta) return;
+  if(dayEditExistingAttachMeta.storage && dayEditExistingAttachMeta.path){
+    const url = getPhotoPublicUrl(dayEditExistingAttachMeta.path);
+    if(url) window.open(url, '_blank');
+    else showStatus('attachStatus','error','Não consegui abrir o anexo.');
+    return;
+  }
   try{
     const res = await window.storage.get(`attachment:${dayEditTarget}`, false);
     if(res && res.value){
@@ -1229,43 +1276,60 @@ const fotosOverlay = document.getElementById('fotosOverlay');
 document.getElementById('btnFotos').addEventListener('click', openFotosOverlay);
 document.getElementById('btnCloseFotos').addEventListener('click', ()=> fotosOverlay.classList.remove('show'));
 
-async function openFotosOverlay(){
-  document.getElementById('fotosFilter').value = '';
-  const content = document.getElementById('fotosContent');
-  content.innerHTML = `<p style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--ink-soft);">Carregando fotos...</p>`;
-  fotosOverlay.classList.add('show');
+const FOTOS_PAGE_SIZE = 30;
+let fotosVisibleDays = FOTOS_PAGE_SIZE;
 
-  const dates = Object.keys(state.entries)
+function getFotosDates(){
+  return Object.keys(state.entries)
     .filter(d => state.entries[d].fotos && Object.keys(state.entries[d].fotos).length)
     .sort().reverse();
+}
 
-  if(dates.length === 0){
+async function openFotosOverlay(){
+  document.getElementById('fotosFilter').value = '';
+  fotosVisibleDays = FOTOS_PAGE_SIZE;
+  fotosOverlay.classList.add('show');
+  await renderFotosContent();
+}
+
+async function renderFotosContent(){
+  const content = document.getElementById('fotosContent');
+  content.innerHTML = `<p style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--ink-soft);">Carregando fotos...</p>`;
+
+  const allDates = getFotosDates();
+  if(allDates.length === 0){
     content.innerHTML = `<div class="empty-state"><div class="stamp">vazio</div><div>Nenhuma foto de batida salva ainda.</div></div>`;
     return;
   }
+  const dates = allDates.slice(0, fotosVisibleDays);
 
   const groupsHtml = [];
   for(const d of dates){
     const fotos = state.entries[d].fotos;
     const types = TYPE_ORDER.filter(t => fotos[t]);
+    // fotos no Storage já têm URL direta (sem esperar rede); só as antigas (legado) precisam ser buscadas.
     const thumbs = await Promise.all(types.map(async t=>{
+      const meta = fotos[t];
+      if(meta.storage && meta.path){
+        return { t, url: getPhotoPublicUrl(meta.path), mimeType: meta.mimeType || 'image/jpeg' };
+      }
       let base64 = '';
       try{
         const res = await window.storage.get(`punch_photo:${d}:${t}`, false);
         if(res && res.value) base64 = res.value;
       }catch(e){}
-      return { t, base64, mimeType: fotos[t].mimeType || 'image/jpeg' };
+      return { t, base64, mimeType: meta.mimeType || 'image/jpeg' };
     }));
-    const validThumbs = thumbs.filter(x => x.base64);
+    const validThumbs = thumbs.filter(x => x.url || x.base64);
     if(validThumbs.length === 0) continue;
     const dayLabel = `${fmtDateBR(d)}/${d.slice(0,4)} · ${WEEKDAY_NAMES[dateWeekday(d)]}`;
     groupsHtml.push(`
       <div class="foto-day-group" data-day-label="${escHtml(dayLabel.toLowerCase())}">
         <div class="foto-day-title">${dayLabel}</div>
         <div class="foto-grid">
-          ${validThumbs.map(({t,base64,mimeType})=> `
+          ${validThumbs.map(({t,url,base64,mimeType})=> `
             <div class="foto-thumb">
-              <img src="data:${mimeType};base64,${base64}" alt="${TYPE_LABELS[t]}" data-b64="${base64}" data-mime="${mimeType}">
+              <img src="${url || `data:${mimeType};base64,${base64}`}" alt="${TYPE_LABELS[t]}" loading="lazy" ${url ? `data-url="${url}"` : `data-b64="${base64}" data-mime="${mimeType}"`}>
               <div class="foto-label">${TYPE_LABELS[t]}</div>
               <button type="button" class="foto-del" data-day="${d}" data-type="${t}" title="Excluir foto">×</button>
             </div>
@@ -1275,10 +1339,19 @@ async function openFotosOverlay(){
     `);
   }
 
-  content.innerHTML = groupsHtml.length ? groupsHtml.join('') : `<div class="empty-state"><div class="stamp">vazio</div><div>Nenhuma foto de batida salva ainda.</div></div>`;
+  const moreCount = allDates.length - dates.length;
+  const loadMoreHtml = moreCount > 0
+    ? `<button type="button" class="btn btn-ghost" id="btnFotosLoadMore">Carregar mais antigas (${moreCount} dia${moreCount===1?'':'s'})</button>`
+    : '';
+
+  content.innerHTML = (groupsHtml.length ? groupsHtml.join('') : `<div class="empty-state"><div class="stamp">vazio</div><div>Nenhuma foto de batida salva ainda.</div></div>`) + loadMoreHtml;
 
   content.querySelectorAll('.foto-thumb img').forEach(img=>{
-    img.addEventListener('click', ()=> openBase64AsBlob(img.getAttribute('data-b64'), img.getAttribute('data-mime')));
+    img.addEventListener('click', ()=>{
+      const url = img.getAttribute('data-url');
+      if(url) window.open(url, '_blank');
+      else openBase64AsBlob(img.getAttribute('data-b64'), img.getAttribute('data-mime'));
+    });
   });
   content.querySelectorAll('.foto-del').forEach(btn=>{
     btn.addEventListener('click', async (ev)=>{
@@ -1286,13 +1359,24 @@ async function openFotosOverlay(){
       const d = btn.getAttribute('data-day');
       const t = btn.getAttribute('data-type');
       if(!(await confirmModal(`Excluir a foto de "${TYPE_LABELS[t]}" do dia ${fmtDateBR(d)}?`))) return;
-      try{ await window.storage.delete(`punch_photo:${d}:${t}`, false); }catch(e){}
+      const meta = state.entries[d] && state.entries[d].fotos && state.entries[d].fotos[t];
+      try{
+        if(meta && meta.storage && meta.path) await deletePhotoFile(meta.path);
+        else await window.storage.delete(`punch_photo:${d}:${t}`, false);
+      }catch(e){}
       if(state.entries[d] && state.entries[d].fotos) delete state.entries[d].fotos[t];
       await persist();
       renderAll();
-      openFotosOverlay();
+      renderFotosContent();
     });
   });
+  const loadMoreBtn = document.getElementById('btnFotosLoadMore');
+  if(loadMoreBtn){
+    loadMoreBtn.addEventListener('click', ()=>{
+      fotosVisibleDays += FOTOS_PAGE_SIZE;
+      renderFotosContent();
+    });
+  }
   applyFotosFilter();
 }
 
@@ -1316,14 +1400,24 @@ document.getElementById('btnSaveDayEdit').addEventListener('click', async ()=>{
 
   if(dayEditPendingFile){
     try{
-      await window.storage.set(`attachment:${dayEditTarget}`, dayEditPendingFile.base64, false);
-      attachMeta = { filename: dayEditPendingFile.filename, mimeType: dayEditPendingFile.mimeType };
+      if(supabaseClient){
+        const ext = guessExt(dayEditPendingFile.mimeType, dayEditPendingFile.filename);
+        const path = `anexo/${dayEditTarget}.${ext}`;
+        await uploadPhotoFile(path, dayEditPendingFile.base64, dayEditPendingFile.mimeType);
+        attachMeta = { filename: dayEditPendingFile.filename, mimeType: dayEditPendingFile.mimeType, storage: true, path };
+      } else {
+        await window.storage.set(`attachment:${dayEditTarget}`, dayEditPendingFile.base64, false);
+        attachMeta = { filename: dayEditPendingFile.filename, mimeType: dayEditPendingFile.mimeType };
+      }
     }catch(e){
       showStatus('attachStatus','error','Não consegui salvar o anexo (talvez o arquivo seja grande demais). O resto do dia foi salvo normalmente.');
       attachMeta = dayEditExistingAttachMeta;
     }
   } else if(dayEditRemoveAttachment){
-    try{ await window.storage.delete(`attachment:${dayEditTarget}`, false); }catch(e){}
+    try{
+      if(dayEditExistingAttachMeta && dayEditExistingAttachMeta.storage && dayEditExistingAttachMeta.path) await deletePhotoFile(dayEditExistingAttachMeta.path);
+      else await window.storage.delete(`attachment:${dayEditTarget}`, false);
+    }catch(e){}
     attachMeta = null;
   }
 
@@ -1464,10 +1558,18 @@ function renderLedger(){
     btn.addEventListener('click', ()=>{
       if(btn.classList.contains('confirming')){
         const d = btn.getAttribute('data-del');
+        const removedEntry = state.entries[d];
+        const removedFotos = (removedEntry && removedEntry.fotos) || {};
+        const removedAttach = removedEntry && removedEntry.attachMeta;
         delete state.entries[d];
         persist();
-        window.storage.delete(`attachment:${d}`, false).catch(()=>{});
-        TYPE_ORDER.forEach(t=> window.storage.delete(`punch_photo:${d}:${t}`, false).catch(()=>{}));
+        if(removedAttach && removedAttach.storage && removedAttach.path) deletePhotoFile(removedAttach.path).catch(()=>{});
+        else window.storage.delete(`attachment:${d}`, false).catch(()=>{});
+        TYPE_ORDER.forEach(t=>{
+          const meta = removedFotos[t];
+          if(meta && meta.storage && meta.path) deletePhotoFile(meta.path).catch(()=>{});
+          else window.storage.delete(`punch_photo:${d}:${t}`, false).catch(()=>{});
+        });
         renderAll();
       } else {
         btn.classList.add('confirming'); btn.textContent='Confirmar?';
@@ -1773,11 +1875,27 @@ document.getElementById('btnSaveSettings').addEventListener('click', async ()=>{
   settingsOverlay.classList.remove('show');
 });
 
+// ---------- backup automático diário (rolling 30 dias, na tabela `backups` do Supabase) ----------
+async function runAutoBackupIfNeeded(){
+  if(!supabaseClient) return;
+  const today = todayStr();
+  if(localStorage.getItem('meuPonto_lastAutoBackup') === today) return;
+  try{
+    await supabaseClient.from('backups').upsert({ id: today, snapshot: JSON.stringify(state), created_at: new Date().toISOString() });
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 30);
+    await supabaseClient.from('backups').delete().lt('id', cutoff.toISOString().slice(0,10));
+    localStorage.setItem('meuPonto_lastAutoBackup', today);
+  }catch(e){
+    console.error('Falha no backup automático', e);
+  }
+}
+
 // ---------- init ----------
 (async function init(){
   document.getElementById('punchDate').value = todayStr();
   state = await loadData();
   renderAll();
+  runAutoBackupIfNeeded();
 })();
 </script>
 </body>
