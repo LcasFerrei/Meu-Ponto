@@ -168,6 +168,7 @@
   .day-check input{width:auto;accent-color:var(--ink);}
   .day-time-inputs{display:flex;align-items:center;gap:5px;flex:1;}
   .day-time-inputs input{width:54px;padding:6px 7px;font-size:13px;text-align:center;}
+  .day-time-inputs input[type=time]{width:auto;flex:1;min-width:86px;}
   .day-time-inputs span{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-soft);}
 
   .week-total-line{display:flex;justify-content:space-between;align-items:center;font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--ink-soft);background:var(--paper-2);border-radius:5px;padding:9px 12px;margin:14px 0 4px;}
@@ -400,16 +401,23 @@
 <div class="overlay" id="settingsOverlay">
   <div class="modal" style="max-width:420px;">
     <h3>Jornada padrão</h3>
-    <p class="modal-hint">Escolha um modelo pronto ou ajuste cada dia da semana.</p>
+    <p class="modal-hint" id="jornadaVigenciaInfo">Escolha um modelo pronto ou ajuste cada dia da semana.</p>
 
-    <div class="preset-grid" id="presetGrid">
+    <label>Vigente a partir de</label>
+    <input type="date" id="jornadaVigenciaDesde">
+    <p class="modal-hint" style="margin-top:4px;">Dias já registrados antes dessa data continuam calculados com a jornada anterior — o banco de horas acumulado não muda.</p>
+
+    <div class="preset-grid" id="presetGrid" style="margin-top:14px;">
       <button type="button" class="preset-btn" data-preset="528"><span class="p-title">44h/semana</span><span class="p-sub">8h48 por dia · CLT</span></button>
       <button type="button" class="preset-btn" data-preset="480"><span class="p-title">40h/semana</span><span class="p-sub">8h por dia</span></button>
       <button type="button" class="preset-btn" data-preset="432"><span class="p-title">36h/semana</span><span class="p-sub">7h12 por dia</span></button>
       <button type="button" class="preset-btn" data-preset="360"><span class="p-title">30h/semana</span><span class="p-sub">6h por dia</span></button>
     </div>
 
-    <label style="margin-top:16px;">Personalizar por dia</label>
+    <label style="margin-top:16px;">Intervalo de almoço (minutos)</label>
+    <input type="number" id="jornadaAlmocoMin" min="0" max="240" value="60">
+
+    <label style="margin-top:12px;">Horário por dia</label>
     <div class="day-selector" id="daySelector"></div>
 
     <div class="week-total-line">Total semanal <span id="weekTotalPreview">44h00</span></div>
@@ -513,7 +521,7 @@ const STORAGE_KEY = 'ponto_data';
 const WEEKDAY_NAMES = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 const TYPE_LABELS = { entrada:'Entrada', saidaAlmoco:'Saída almoço', voltaAlmoco:'Volta almoço', saida:'Saída' };
 const TYPE_ORDER = ['entrada','saidaAlmoco','voltaAlmoco','saida'];
-let state = { metaPorDia: {0:0,1:528,2:528,3:528,4:528,5:528,6:0}, entries: {} };
+let state = { jornadaPeriods: [{ vigenciaDesde:'0000-01-01', almocoMin:60, horarios:null, metaPorDia: {0:0,1:528,2:528,3:528,4:528,5:528,6:0} }], entries: {} };
 let pendingImage = null;
 let selectedType = 'entrada';
 let dayEditTarget = null;
@@ -643,16 +651,19 @@ async function loadData(){
     const res = await window.storage.get(STORAGE_KEY, false);
     if(res && res.value){
       const parsed = JSON.parse(res.value);
+      if(Array.isArray(parsed.jornadaPeriods) && parsed.jornadaPeriods.length){
+        return { jornadaPeriods: parsed.jornadaPeriods, entries: parsed.entries ?? {} };
+      }
+      // migração: versões antigas guardavam uma única jornada, sem data de vigência
       let metaPorDia = parsed.metaPorDia;
       if(!metaPorDia){
-        // migração: versões antigas guardavam um único valor pra seg-sex
         const v = parsed.metaDiariaMin ?? 528;
         metaPorDia = {0:0, 1:v, 2:v, 3:v, 4:v, 5:v, 6:0};
       }
-      return { metaPorDia, entries: parsed.entries ?? {} };
+      return { jornadaPeriods: [{ vigenciaDesde:'0000-01-01', almocoMin:60, horarios:null, metaPorDia }], entries: parsed.entries ?? {} };
     }
   }catch(e){}
-  return { metaPorDia: {...DEFAULT_META_POR_DIA}, entries: {} };
+  return { jornadaPeriods: [{ vigenciaDesde:'0000-01-01', almocoMin:60, horarios:null, metaPorDia: {...DEFAULT_META_POR_DIA} }], entries: {} };
 }
 async function persist(){
   try{ await window.storage.set(STORAGE_KEY, JSON.stringify(state), false); }
@@ -662,6 +673,7 @@ async function persist(){
 // ---------- helpers ----------
 function pad2(n){ return String(n).padStart(2,'0'); }
 function timeToMin(t){ if(!t) return null; const [h,m]=t.split(':').map(Number); if(isNaN(h)||isNaN(m)) return null; return h*60+m; }
+function minutesToTime(totalMin){ totalMin = ((totalMin % 1440) + 1440) % 1440; return `${pad2(Math.floor(totalMin/60))}:${pad2(totalMin%60)}`; }
 function fmtSigned(mins){ if(mins===0) return '00h00min'; const sign = mins<0?'-':'+'; const abs=Math.abs(mins); return `${sign}${pad2(Math.floor(abs/60))}h${pad2(abs%60)}min`; }
 function fmtHM(mins){ if(mins==null) return '—'; return `${pad2(Math.floor(mins/60))}h${pad2(mins%60)}min`; }
 function dateWeekday(dateStr){ return new Date(dateStr+'T12:00:00').getDay(); }
@@ -672,7 +684,17 @@ function computeWorked(entry){
   if(sa!=null && va!=null) total -= (va-sa);
   return total;
 }
-function computeMeta(dateStr){ const wd=dateWeekday(dateStr); return state.metaPorDia[wd] || 0; }
+function findJornadaPeriod(dateStr){
+  const periods = state.jornadaPeriods;
+  let match = periods[0];
+  for(const p of periods){ if(p.vigenciaDesde <= dateStr) match = p; }
+  return match;
+}
+function computeMeta(dateStr){
+  const wd = dateWeekday(dateStr);
+  const period = findJornadaPeriod(dateStr);
+  return (period && period.metaPorDia[wd]) || 0;
+}
 function getMondayOfWeek(dateStr){ const d=new Date(dateStr+'T12:00:00'); const day=d.getDay(); d.setDate(d.getDate()+((day===0?-6:1)-day)); return d; }
 function fmtDateBR(dateStr){ const [y,m,d]=dateStr.split('-'); return `${d}/${m}`; }
 function todayStr(){ return new Date().toISOString().slice(0,10); }
@@ -712,7 +734,8 @@ function validateEntry(entry){
 
 // ---------- rendering: header ----------
 function renderMetaLabels(){
-  const weekdayVals = [1,2,3,4,5].map(wd => state.metaPorDia[wd] || 0);
+  const latest = state.jornadaPeriods[state.jornadaPeriods.length-1];
+  const weekdayVals = [1,2,3,4,5].map(wd => latest.metaPorDia[wd] || 0);
   const allEqual = weekdayVals.every(v => v === weekdayVals[0]);
   const weekTotal = weekdayVals.reduce((a,b)=>a+b, 0);
   const metaLabelEl = document.getElementById('metaLabel');
@@ -1583,17 +1606,21 @@ const WEEKDAY_FULL = { 1:'Segunda', 2:'Terça', 3:'Quarta', 4:'Quinta', 5:'Sexta
 const WEEKDAYS_ORDER = [1,2,3,4,5];
 
 function buildDaySelector(){
+  const latest = state.jornadaPeriods[state.jornadaPeriods.length-1];
+  const almocoMin = latest.almocoMin ?? 60;
   const container = document.getElementById('daySelector');
   container.innerHTML = WEEKDAYS_ORDER.map(wd=>{
-    const val = state.metaPorDia[wd] || 0;
-    const checked = val > 0;
-    const display = val > 0 ? val : 480;
-    const h = Math.floor(display/60), m = display%60;
+    const h = latest.horarios && latest.horarios[wd];
+    const metaMin = latest.metaPorDia[wd] || 0;
+    const checked = h ? true : metaMin > 0;
+    const entrada = h ? h.entrada : '07:00';
+    const saida = h ? h.saida : minutesToTime(timeToMin(entrada) + (metaMin>0?metaMin:510) + almocoMin);
     return `<div class="day-row ${checked?'':'disabled'}" data-day="${wd}">
       <label class="day-check"><input type="checkbox" class="dayEnable" ${checked?'checked':''}> ${WEEKDAY_FULL[wd]}</label>
       <div class="day-time-inputs">
-        <input type="number" class="dayHoras" min="0" max="16" value="${h}" ${checked?'':'disabled'}><span>h</span>
-        <input type="number" class="dayMin" min="0" max="59" value="${m}" ${checked?'':'disabled'}><span>min</span>
+        <input type="time" class="dayEntrada" value="${entrada}" ${checked?'':'disabled'}>
+        <span>até</span>
+        <input type="time" class="daySaida" value="${saida}" ${checked?'':'disabled'}>
       </div>
     </div>`;
   }).join('');
@@ -1602,49 +1629,55 @@ function buildDaySelector(){
     cb.addEventListener('change', ()=>{
       const row = cb.closest('.day-row');
       row.classList.toggle('disabled', !cb.checked);
-      row.querySelectorAll('input[type=number]').forEach(inp=> inp.disabled = !cb.checked);
+      row.querySelectorAll('input[type=time]').forEach(inp=> inp.disabled = !cb.checked);
       updateWeekTotalPreview();
     });
   });
-  container.querySelectorAll('input[type=number]').forEach(inp=>{
+  container.querySelectorAll('input[type=time]').forEach(inp=>{
     inp.addEventListener('input', updateWeekTotalPreview);
   });
   updateWeekTotalPreview();
 }
 
 function readDaySelectorValues(){
-  const result = {};
+  const almocoMin = parseInt(document.getElementById('jornadaAlmocoMin').value) || 0;
+  const metaPorDia = {};
+  const horarios = {};
   document.querySelectorAll('#daySelector .day-row').forEach(row=>{
     const wd = parseInt(row.getAttribute('data-day'));
     const checked = row.querySelector('.dayEnable').checked;
-    if(!checked){ result[wd] = 0; return; }
-    const h = parseInt(row.querySelector('.dayHoras').value) || 0;
-    const m = parseInt(row.querySelector('.dayMin').value) || 0;
-    result[wd] = h*60 + m;
+    if(!checked){ metaPorDia[wd] = 0; return; }
+    const entrada = row.querySelector('.dayEntrada').value;
+    const saida = row.querySelector('.daySaida').value;
+    const e = timeToMin(entrada), s = timeToMin(saida);
+    metaPorDia[wd] = (e!=null && s!=null) ? Math.max(0, s - e - almocoMin) : 0;
+    horarios[wd] = { entrada, saida };
   });
-  return result;
+  return { metaPorDia, horarios, almocoMin };
 }
 
 function updateWeekTotalPreview(){
-  const vals = readDaySelectorValues();
-  const total = WEEKDAYS_ORDER.reduce((sum,wd)=> sum + (vals[wd]||0), 0);
+  const { metaPorDia } = readDaySelectorValues();
+  const total = WEEKDAYS_ORDER.reduce((sum,wd)=> sum + (metaPorDia[wd]||0), 0);
   document.getElementById('weekTotalPreview').textContent = `${Math.floor(total/60)}h${pad2(total%60)}`;
   document.querySelectorAll('.preset-btn').forEach(btn=>{
     const presetVal = parseInt(btn.getAttribute('data-preset'));
-    const matches = WEEKDAYS_ORDER.every(wd => (vals[wd]||0) === presetVal);
+    const matches = WEEKDAYS_ORDER.every(wd => (metaPorDia[wd]||0) === presetVal);
     btn.classList.toggle('active', matches);
   });
 }
 
 function applyPreset(minutesPerDay){
+  const almocoMin = parseInt(document.getElementById('jornadaAlmocoMin').value) || 0;
   document.querySelectorAll('#daySelector .day-row').forEach(row=>{
     const cb = row.querySelector('.dayEnable');
     cb.checked = true;
     row.classList.remove('disabled');
-    const h = Math.floor(minutesPerDay/60), m = minutesPerDay%60;
-    const hInp = row.querySelector('.dayHoras'), mInp = row.querySelector('.dayMin');
-    hInp.value = h; hInp.disabled = false;
-    mInp.value = m; mInp.disabled = false;
+    const entradaInp = row.querySelector('.dayEntrada'), saidaInp = row.querySelector('.daySaida');
+    entradaInp.disabled = false; saidaInp.disabled = false;
+    const entrada = entradaInp.value || '07:00';
+    entradaInp.value = entrada;
+    saidaInp.value = minutesToTime(timeToMin(entrada) + minutesPerDay + almocoMin);
   });
   updateWeekTotalPreview();
 }
@@ -1654,16 +1687,35 @@ document.getElementById('presetGrid').addEventListener('click', (ev)=>{
   if(!btn) return;
   applyPreset(parseInt(btn.getAttribute('data-preset')));
 });
+document.getElementById('jornadaAlmocoMin').addEventListener('input', updateWeekTotalPreview);
+
+function updateJornadaVigenciaInfo(latest){
+  const info = document.getElementById('jornadaVigenciaInfo');
+  if(latest.vigenciaDesde && latest.vigenciaDesde !== '0000-01-01'){
+    info.textContent = `Jornada atual vigente desde ${fmtDateBR(latest.vigenciaDesde)}/${latest.vigenciaDesde.slice(0,4)}. Pra registrar uma mudança de horário sem afetar dias já registrados, ajuste "Vigente a partir de" pra uma data futura.`;
+  } else {
+    info.textContent = `Escolha um modelo pronto ou ajuste o horário de entrada/saída de cada dia.`;
+  }
+}
 
 const settingsOverlay = document.getElementById('settingsOverlay');
 document.getElementById('btnSettings').addEventListener('click', ()=>{
+  const latest = state.jornadaPeriods[state.jornadaPeriods.length-1];
+  document.getElementById('jornadaAlmocoMin').value = latest.almocoMin ?? 60;
+  document.getElementById('jornadaVigenciaDesde').value = todayStr();
+  updateJornadaVigenciaInfo(latest);
   buildDaySelector();
   settingsOverlay.classList.add('show');
 });
 document.getElementById('btnCloseSettings').addEventListener('click', ()=> settingsOverlay.classList.remove('show'));
 document.getElementById('btnSaveSettings').addEventListener('click', async ()=>{
-  const vals = readDaySelectorValues();
-  state.metaPorDia = { 0:0, 1: vals[1]||0, 2: vals[2]||0, 3: vals[3]||0, 4: vals[4]||0, 5: vals[5]||0, 6:0 };
+  const vigenciaDesde = document.getElementById('jornadaVigenciaDesde').value || todayStr();
+  const { metaPorDia, horarios, almocoMin } = readDaySelectorValues();
+  const newPeriod = { vigenciaDesde, almocoMin, horarios, metaPorDia: { 0:0, 1:metaPorDia[1]||0, 2:metaPorDia[2]||0, 3:metaPorDia[3]||0, 4:metaPorDia[4]||0, 5:metaPorDia[5]||0, 6:0 } };
+  state.jornadaPeriods = state.jornadaPeriods
+    .filter(p => p.vigenciaDesde !== vigenciaDesde)
+    .concat([newPeriod])
+    .sort((a,b)=> a.vigenciaDesde.localeCompare(b.vigenciaDesde));
   await persist();
   renderAll();
   settingsOverlay.classList.remove('show');
