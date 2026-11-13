@@ -325,6 +325,7 @@
       <div class="odometer-label">Banco de horas acumulado</div>
       <div class="odometer-value" id="bancoValue">00h00min</div>
       <div class="odometer-sub" id="bancoSub">0 dias lançados</div>
+      <div class="odometer-sub" title="Só contam entrada e saída frente ao horário previsto. Extras e débitos de até 10 min no dia são ignorados, e cada atraso/saída antecipada de até 5 min também.">Regra do DRH · tolerância de 10 min/dia</div>
     </div>
     <div class="odometer-meta">
       Meta por dia: <b id="metaLabel">8h48</b><br>
@@ -749,8 +750,41 @@ function computeDayResult(dateStr){
     return { worked: 0, meta, diff: -meta, tipo: entry.tipo };
   }
   const worked = computeWorked(entry);
-  const diff = worked!=null ? worked - meta : null;
+  const diff = worked!=null ? computeBancoDiff(dateStr, entry, worked, meta) : null;
   return { worked, meta, diff, tipo: null };
+}
+// Horário previsto de entrada/saída do dia (da jornada vigente). Sem horário
+// cadastrado, assume entrada 07:00 e saída = entrada + meta + almoço.
+function scheduledTimes(dateStr, meta){
+  const period = findJornadaPeriod(dateStr);
+  const h = period && period.horarios && period.horarios[dateWeekday(dateStr)];
+  if(h && timeToMin(h.entrada)!=null && timeToMin(h.saida)!=null){
+    return { entrada: timeToMin(h.entrada), saida: timeToMin(h.saida) };
+  }
+  const entrada = 7*60;
+  return { entrada, saida: entrada + meta + ((period && period.almocoMin) ?? 60) };
+}
+// Mesma regra do DRH (New Ponto / CCT Unifor), conferida contra o relatório
+// de 03/08 a 12/11/2026:
+//  - só valem entrada e saída comparadas com o horário previsto (o almoço é pré-assinalado);
+//  - extra = chegada antecipada + saída após o horário; só conta se passar de 10 min no dia;
+//  - débito = atraso + saída antecipada, ignorando cada marcação de até 5 min;
+//    só conta se passar de 10 min no dia;
+//  - dia sem jornada (sábado/domingo): tudo que for trabalhado é extra.
+const TOLERANCIA_DIA_MIN = 10;
+const TOLERANCIA_MARCACAO_MIN = 5;
+function computeBancoDiff(dateStr, entry, worked, meta){
+  if(meta <= 0) return worked > TOLERANCIA_DIA_MIN ? worked : 0;
+  const { entrada, saida } = scheduledTimes(dateStr, meta);
+  const devEntrada = entrada - timeToMin(entry.entrada); // + = chegou antes
+  const devSaida = timeToMin(entry.saida) - saida;        // + = saiu depois
+  let extra = Math.max(0, devEntrada) + Math.max(0, devSaida);
+  if(extra <= TOLERANCIA_DIA_MIN) extra = 0;
+  let debito = [Math.max(0, -devEntrada), Math.max(0, -devSaida)]
+    .filter(v => v > TOLERANCIA_MARCACAO_MIN)
+    .reduce((a, b) => a + b, 0);
+  if(debito <= TOLERANCIA_DIA_MIN) debito = 0;
+  return extra - debito;
 }
 function escHtml(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
