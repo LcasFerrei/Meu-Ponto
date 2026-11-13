@@ -39,6 +39,11 @@
   .odometer-value.pos{color:#4FD8FF;}
   .odometer-value.neg{color:#FF7B86;}
   .odometer-sub{font-family:'IBM Plex Mono',monospace;font-size:12px;color:#8FB4E8;position:relative;margin-top:4px;}
+  .banco-filter{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;}
+  .banco-filter label{margin:0;font-size:12px;color:#8FB4E8;text-transform:none;letter-spacing:0;}
+  .banco-filter input[type=date]{width:auto;padding:3px 6px;font-family:'IBM Plex Mono',monospace;font-size:12px;background:transparent;color:var(--paper);border:1px solid #8FB4E8;border-radius:3px;color-scheme:dark;}
+  .banco-filter button{background:none;border:1px solid #8FB4E8;color:#8FB4E8;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:3px 8px;border-radius:3px;cursor:pointer;}
+  .banco-filter button:hover{color:var(--paper);border-color:var(--paper);}
   .odometer-meta{text-align:right;position:relative;font-family:'IBM Plex Mono',monospace;font-size:12px;color:#8FB4E8;}
   .odometer-meta b{color:var(--paper);}
 
@@ -326,6 +331,11 @@
       <div class="odometer-value" id="bancoValue">00h00min</div>
       <div class="odometer-sub" id="bancoSub">0 dias lançados</div>
       <div class="odometer-sub" title="Só contam entrada e saída frente ao horário previsto. Extras e débitos de até 10 min no dia são ignorados, e cada atraso/saída antecipada de até 5 min também.">Regra do DRH · tolerância de 10 min/dia</div>
+      <div class="odometer-sub banco-filter">
+        <label for="bancoInicio">Contando desde</label>
+        <input type="date" id="bancoInicio" title="Só os dias a partir desta data aparecem e entram no saldo. Deixe vazio para mostrar todos.">
+        <button type="button" id="bancoInicioClear" title="Mostrar todos os dias">todos</button>
+      </div>
     </div>
     <div class="odometer-meta">
       Meta por dia: <b id="metaLabel">8h48</b><br>
@@ -574,6 +584,8 @@ const ICONS = {
 
 // ---------- storage ----------
 const DEFAULT_META_POR_DIA = {0:0, 1:528, 2:528, 3:528, 4:528, 5:528, 6:0};
+// Início do período do banco de horas (mesmo do relatório do DRH). Dias anteriores ficam ocultos e fora do saldo.
+const DEFAULT_BANCO_INICIO = '2026-08-03';
 
 // Configuração do Supabase — cole aqui a "Project URL" e a chave "anon public"
 // (Supabase Dashboard > Project Settings > API).
@@ -691,7 +703,7 @@ async function loadData(){
     if(res && res.value){
       const parsed = JSON.parse(res.value);
       if(Array.isArray(parsed.jornadaPeriods) && parsed.jornadaPeriods.length){
-        return { jornadaPeriods: parsed.jornadaPeriods, entries: parsed.entries ?? {} };
+        return { jornadaPeriods: parsed.jornadaPeriods, entries: parsed.entries ?? {}, bancoInicio: parsed.bancoInicio !== undefined ? parsed.bancoInicio : DEFAULT_BANCO_INICIO };
       }
       // migração: versões antigas guardavam uma única jornada, sem data de vigência
       let metaPorDia = parsed.metaPorDia;
@@ -699,10 +711,10 @@ async function loadData(){
         const v = parsed.metaDiariaMin ?? 528;
         metaPorDia = {0:0, 1:v, 2:v, 3:v, 4:v, 5:v, 6:0};
       }
-      return { jornadaPeriods: [{ vigenciaDesde:'0000-01-01', almocoMin:60, horarios:null, metaPorDia }], entries: parsed.entries ?? {} };
+      return { jornadaPeriods: [{ vigenciaDesde:'0000-01-01', almocoMin:60, horarios:null, metaPorDia }], entries: parsed.entries ?? {}, bancoInicio: parsed.bancoInicio !== undefined ? parsed.bancoInicio : DEFAULT_BANCO_INICIO };
     }
   }catch(e){}
-  return { jornadaPeriods: [{ vigenciaDesde:'0000-01-01', almocoMin:60, horarios:null, metaPorDia: {...DEFAULT_META_POR_DIA} }], entries: {} };
+  return { jornadaPeriods: [{ vigenciaDesde:'0000-01-01', almocoMin:60, horarios:null, metaPorDia: {...DEFAULT_META_POR_DIA} }], entries: {}, bancoInicio: DEFAULT_BANCO_INICIO };
 }
 async function persist(){
   try{ await window.storage.set(STORAGE_KEY, JSON.stringify(state), false); }
@@ -738,6 +750,8 @@ function getMondayOfWeek(dateStr){ const d=new Date(dateStr+'T12:00:00'); const 
 function fmtDateBR(dateStr){ const [y,m,d]=dateStr.split('-'); return `${d}/${m}`; }
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 function nowTimeStr(){ const d=new Date(); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
+// Datas lançadas dentro do período do banco (a partir de state.bancoInicio; sem data = todas).
+function bancoDates(){ return Object.keys(state.entries).filter(d => !state.bancoInicio || d >= state.bancoInicio); }
 function getEntry(dateStr){ return state.entries[dateStr] || {entrada:null,saidaAlmoco:null,voltaAlmoco:null,saida:null,obs:null,tipo:null,attachMeta:null,fotos:{}}; }
 const DAY_TYPE_LABELS = { atestado:'Atestado médico', licenca_medica:'Licença médica', funeral:'Licença nojo/funeral', feriado:'Feriado', ferias:'Férias', folga_banco:'Folga (banco de horas)' };
 function computeDayResult(dateStr){
@@ -820,7 +834,9 @@ function renderMetaLabels(){
   document.getElementById('metaSemanalLabel').textContent = `${Math.floor(weekTotal/60)}h${pad2(weekTotal%60)}`;
 }
 function renderBanco(){
-  const dates = Object.keys(state.entries);
+  const inicioEl = document.getElementById('bancoInicio');
+  if(inicioEl) inicioEl.value = state.bancoInicio || '';
+  const dates = bancoDates();
   let total = 0, completedDays = 0;
   dates.forEach(d=>{
     const { diff } = computeDayResult(d);
@@ -1547,7 +1563,7 @@ function renderWeekBlock(weekKey, datesInWeek){
 
 function renderLedger(){
   const ledger = document.getElementById('ledger');
-  const dates = Object.keys(state.entries).sort().reverse();
+  const dates = bancoDates().sort().reverse();
   if(dates.length===0){
     ledger.innerHTML = `<div class="empty-state"><div class="stamp">vazio</div><div>Nenhum registro ainda.<br>Bata seu primeiro ponto ao lado.</div></div>`;
     return;
@@ -1625,7 +1641,7 @@ function renderAll(){
 
 // ---------- dias úteis sem registro ----------
 function computeMissingWeekdays(){
-  const dates = Object.keys(state.entries);
+  const dates = bancoDates();
   if(dates.length===0) return [];
   const sorted = dates.sort();
   const cur = new Date(sorted[0]+'T12:00:00');
@@ -1658,7 +1674,7 @@ function renderMissingBanner(){
 
 // ---------- resumo anual ----------
 function getAvailableYears(){
-  const years = new Set(Object.keys(state.entries).map(d=> d.slice(0,4)));
+  const years = new Set(bancoDates().map(d=> d.slice(0,4)));
   years.add(String(new Date().getFullYear()));
   return Array.from(years).sort().reverse();
 }
@@ -1671,7 +1687,7 @@ function renderYearSelect(){
 }
 function renderYearStats(){
   const year = document.getElementById('yearSelect').value;
-  const datesInYear = Object.keys(state.entries).filter(d=> d.startsWith(year)).sort();
+  const datesInYear = bancoDates().filter(d=> d.startsWith(year)).sort();
   let total=0, workedDays=0, justificado=0, folga=0, ferias=0;
   const monthTotals = {};
   datesInYear.forEach(d=>{
@@ -1928,6 +1944,16 @@ async function runAutoBackupIfNeeded(){
 (async function init(){
   document.getElementById('punchDate').value = todayStr();
   state = await loadData();
+  document.getElementById('bancoInicio').addEventListener('change', async (ev)=>{
+    state.bancoInicio = ev.target.value || null;
+    renderAll();
+    await persist();
+  });
+  document.getElementById('bancoInicioClear').addEventListener('click', async ()=>{
+    state.bancoInicio = null;
+    renderAll();
+    await persist();
+  });
   renderAll();
   runAutoBackupIfNeeded();
 })();
